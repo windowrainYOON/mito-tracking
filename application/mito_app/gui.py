@@ -183,26 +183,55 @@ class TableTab(QWidget):
         self.view.setAlternatingRowColors(True)
         lay = QVBoxLayout(self)
         self.cell = QComboBox()
+        self.group = green_group_combo()
         self.count = QLabel()
+        self.all_rows = []
         if cell_filter:
-            row = QHBoxLayout(); row.addWidget(QLabel('Cell')); row.addWidget(self.cell); row.addStretch(1)
-            row.addWidget(self.count); lay.addLayout(row)
+            row = QHBoxLayout()
+            for w in (QLabel('Cells'), self.group, QLabel('Cell'), self.cell):
+                row.addWidget(w)
+            row.addStretch(1); row.addWidget(self.count); lay.addLayout(row)
             self.cell.currentTextChanged.connect(self.apply_filter)
+            self.group.currentIndexChanged.connect(self.group_changed)
         lay.addWidget(self.view)
 
     def set_rows(self, rows):
-        self.model.set_rows(rows)
+        self.all_rows = rows
+        self.group_changed()
+
+    def group_rows(self):
+        return filter_group(self.all_rows, self.group.currentData())
+
+    def group_changed(self, *_):
         self.cell.blockSignals(True); self.cell.clear()
-        self.cell.addItems(['All'] + sorted({r.get('cell', '') for r in rows}))
+        self.cell.addItems(['All'] + sorted({r.get('cell', '') for r in self.group_rows()}))
         self.cell.blockSignals(False)
-        self.proxy.setFilterKeyColumn(self.model.cols.index('cell') if 'cell' in self.model.cols else 0)
         self.apply_filter('All')
-        self.view.sortByColumn(-1, Qt.AscendingOrder); self.proxy.sort(-1)  # original order until a header is clicked
-        self.view.resizeColumnsToContents()
 
     def apply_filter(self, text):
-        self.proxy.setFilterFixedString('' if text in ('All', '') else text)
-        self.count.setText(f'{self.proxy.rowCount()} rows')
+        rows = self.group_rows()
+        if text not in ('All', ''):
+            rows = [r for r in rows if r.get('cell') == text]
+        self.model.set_rows(rows)
+        self.view.sortByColumn(-1, Qt.AscendingOrder); self.proxy.sort(-1)  # original order until a header is clicked
+        self.view.resizeColumnsToContents()
+        self.count.setText(f'{len(rows)} rows')
+
+
+GREEN_GROUPS = (('All cells', ''), ('Green+ only', 'positive'), ('Green− only', 'negative'))
+
+
+def green_group_combo():
+    c = QComboBox()
+    for label, key in GREEN_GROUPS:
+        c.addItem(label, key)
+    c.setToolTip('Green-positive and green-negative cells are measured and exported separately '
+                 '(…_green_pos / …_green_neg files)')
+    return c
+
+
+def filter_group(rows, key):
+    return rows if not key else [r for r in rows if r.get('green_status') == key]
 
 
 class ImageView(QScrollArea):
@@ -239,9 +268,10 @@ class CorrelationTab(QWidget):
         self.data = {'cell': [], 'mito': []}
         self.level = QComboBox(); self.level.addItem('Per cell', 'cell'); self.level.addItem('Per mito object', 'mito')
         self.x = QComboBox(); self.y = QComboBox(); self.cell = QComboBox()
+        self.group = green_group_combo()
         self.logx = QCheckBox('log X'); self.logy = QCheckBox('log Y')
         top = QHBoxLayout()
-        for w in (QLabel('Level'), self.level, QLabel('X (mito)'), self.x, QLabel('Y (green)'), self.y,
+        for w in (QLabel('Level'), self.level, QLabel('Cells'), self.group, QLabel('X (mito)'), self.x, QLabel('Y (green)'), self.y,
                   QLabel('Cell'), self.cell, self.logx, self.logy):
             top.addWidget(w)
         top.addStretch(1)
@@ -257,6 +287,7 @@ class CorrelationTab(QWidget):
         lay.addWidget(QLabel('Spearman rank correlation. Mito objects in the same cell are not independent, '
                              'so per-object p values are optimistic; compare cells or images for inference.'))
         self.level.currentIndexChanged.connect(self.level_changed)
+        self.group.currentIndexChanged.connect(self.level_changed)
         for w in (self.x, self.y, self.cell):
             w.currentIndexChanged.connect(self.draw_scatter)
         for w in (self.logx, self.logy):
@@ -274,7 +305,7 @@ class CorrelationTab(QWidget):
         return stats.available(xs, rows), stats.available(ys, rows)
 
     def rows(self):
-        rows = self.data[self.level.currentData()]
+        rows = filter_group(self.data[self.level.currentData()], self.group.currentData())
         c = self.cell.currentText()
         return rows if self.level.currentData() == 'cell' or c in ('All', '') else [r for r in rows if r['cell'] == c]
 
@@ -286,7 +317,7 @@ class CorrelationTab(QWidget):
                 combo.addItem(label, k)
             combo.blockSignals(False)
         self.cell.blockSignals(True); self.cell.clear()
-        self.cell.addItems(['All'] + sorted({r['cell'] for r in self.data['mito']}))
+        self.cell.addItems(['All'] + sorted({r['cell'] for r in filter_group(self.data['mito'], self.group.currentData())}))
         self.cell.setEnabled(self.level.currentData() == 'mito')
         self.cell.blockSignals(False)
         mito = self.level.currentData() == 'mito'
@@ -419,6 +450,13 @@ class MainWindow(QMainWindow):
         self.sens = self._spin(0.2, 5, 1.0, 2, ' ×', 0.05,
                                'Multiplies the automatic green puncta threshold: >1 keeps fewer, brighter puncta')
         self.min_mito = self._spin(0, 10, 0.05, 3, ' µm²', 0.01, 'Mito pieces smaller than this are left out of the per-mito table')
+        self.green_refine = QCheckBox('Refine cell ROIs with the green pattern')
+        self.green_refine.setChecked(True)
+        self.green_refine.setToolTip('A bright green patch outside the cells, or at the edge of a green-negative cell, '
+                                     'within 2 µm of a green-positive cell is added to that cell\'s ROI')
+        self.green_pos = self._spin(0, 100, 2.0, 1, ' %', 0.5,
+                                    'A cell is green-positive when bright green covers at least this share of its '
+                                    'cytoplasm (cell minus nucleus)')
         of.addRow('Mito segmentation', self.mito_method)
         of.addRow(self.excl_binuc); of.addRow(self.incl_edge)
         of.addRow('Minimum cell area', self.min_area)
@@ -426,6 +464,8 @@ class MainWindow(QMainWindow):
         of.addRow('Pixel size (0 = auto)', self.px)
         of.addRow('Green puncta threshold', self.sens)
         of.addRow('Minimum mito object', self.min_mito)
+        of.addRow(self.green_refine)
+        of.addRow('Green+ cell: bright green ≥', self.green_pos)
 
         self.run_btn = QPushButton('Run all'); self.run_btn.setDefault(True)
         self.run_btn.setMinimumHeight(36); self.run_btn.clicked.connect(self.start)
@@ -444,12 +484,13 @@ class MainWindow(QMainWindow):
         self.cells_tab = TableTab(cell_filter=False)
         self.mito_tab = TableTab(); self.puncta_tab = TableTab()
         self.corr_tab = CorrelationTab()
-        self.views = {k: ImageView() for k in ('green_overlay', 'overlay', 'cells', 'summary')}
+        self.views = {k: ImageView() for k in ('green_overlay', 'green_cells', 'overlay', 'cells', 'summary')}
         self.tabs.addTab(self.cells_tab, 'Cells')
         self.tabs.addTab(self.mito_tab, 'Mito objects')
         self.tabs.addTab(self.puncta_tab, 'Green puncta')
         self.tabs.addTab(self.corr_tab, 'Correlation')
         self.tabs.addTab(self.views['green_overlay'], 'Green on mito')
+        self.tabs.addTab(self.views['green_cells'], 'Green+ / − cells')
         self.tabs.addTab(self.views['overlay'], 'MiNA overlay')
         self.tabs.addTab(self.views['cells'], 'Cells (zoom)')
         self.tabs.addTab(self.views['summary'], 'Cell ROIs')
@@ -567,7 +608,8 @@ class MainWindow(QMainWindow):
                                  exclude_binucleate=self.excl_binuc.isChecked(),
                                  include_edge_cells=self.incl_edge.isChecked(), pixel_size_um=self.px.value(),
                                  puncta_sensitivity=self.sens.value(), min_mito_area_um2=self.min_mito.value(),
-                                 mito_method=self.mito_method.currentData())
+                                 mito_method=self.mito_method.currentData(),
+                                 green_refine=self.green_refine.isChecked(), green_pos_percent=self.green_pos.value())
         for r in range(n):
             self.table.set_status(r, 'queued')
         self.logbox.clear()
@@ -631,7 +673,8 @@ def transpose(rows):
     """Cells as columns, metrics as rows: easier to read with ~45 metrics and a handful of cells."""
     if not rows:
         return []
-    return [dict(metric=k, **{r['cell']: r[k] for r in rows}) for k in rows[0] if k != 'cell']
+    head = {r['cell']: r['cell'] + {'positive': ' (+)', 'negative': ' (−)'}.get(r.get('green_status'), '') for r in rows}
+    return [dict(metric=k, **{head[r['cell']]: r[k] for r in rows}) for k in rows[0] if k != 'cell']
 
 
 def main():

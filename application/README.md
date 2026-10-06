@@ -15,6 +15,7 @@ GUI toolkit: **PySide6 (Qt)**, cross-platform (macOS, Windows, Linux).
 ## Pipeline
 0. **Auto-levels**: the green image is rescaled per image set (dark gap level -> 0, 75th percentile of the smoothed image -> reference level), and all size constants scale with the pixel size, so other image sets with different gain, exposure, bit depth or magnification segment the same way.
 1. **Cell ROIs** (`mito_app/cell_roi.py`): nuclei by Otsu on the blue channel; watershed from each nucleus over the green-channel autofluorescence and dark cell-cell "valleys". Cells touching the image border are excluded (`edge`). Neighbours with no dark border between them are listed in `weak_border_with`; they stay split one nucleus per cell unless *Exclude cells that share a weak border* is ticked.
+1b. **Green pattern** (`mito_app/green_cells.py`): the protein of interest is usually expressed by a whole cell or not at all. Bright green (two-step Otsu on the auto-levelled green, never below 3× the cytoplasm level) is grouped into patches; a cell is **green-positive** when bright green covers ≥ 2 % of its cytoplasm (option). With *Refine cell ROIs with the green pattern* (default on), a patch outside all cells, or at the edge of a cell that is green-negative without it, is moved into the green-positive cell within 2 µm (never taking a nucleus, at most +25 % of the receiving cell's area). Cells are re-scored on the refined ROIs.
 2. **Mito segmentation** (option, default *Split objects*, `mito_app/mito_objects.py`): adaptive (local mean) threshold with a per-cell Otsu floor, rolling-ball background, small holes filled; intensity watershed from h-maxima, re-merged unless the contact is both dark (saddle < 0.75 × dimmer peak) and narrow (contact length < thinner width); 1-px gaps between objects. Adds fragmentation metrics per cell (objects per 100 µm² footprint, area-weighted object size, form factor, small round fraction). *MiNA classic* uses one Otsu threshold per cell instead.
 3. **MiNA per cell** (`mito_app/mina.py`): Python reproduction of Fiji MiNA with its defaults (no preprocessing, Otsu, skeletonize, AnalyzeSkeleton without pruning, population SD). Unlike MiNA, the threshold and skeleton use only pixels inside the cell mask, so neighbouring cells do not leak in.
 
@@ -24,18 +25,20 @@ GUI toolkit: **PySide6 (Qt)**, cross-platform (macOS, Windows, Linux).
    - per cell: green mean on / off mito, enrichment, fraction of green on mito, Pearson, Manders, puncta counts and density.
    - per mito object: green mean / integrated / max on it, number of overlapping puncta, their area, coverage and intensity.
    - Spearman correlations of every mito metric × green metric, per cell and per mito object.
+5. **Green-positive and green-negative cells are reported separately**: every table gets a `green_status` column and is also written as a `_green_pos` and a `_green_neg` version, with the correlations computed within each group only. The puncta threshold stays one per image.
 
 ## In the app
 **Image sets table** (batch input): add files or whole folders (*Add files… / Add folder…*, or drop them on the table); every complete red/green/blue set becomes one row with editable *Dataset* (default: the images' folder name), *Preset* (default: the mito method, `split` / `otsu`; type e.g. a condition name instead) and *Sample* (from the file name). Double-click a channel cell to swap its file. *Run all* analyses the rows one after another (*Stop* finishes the current set and stops); a failed set is marked and the batch goes on. Click a finished row to show its results.
 
-Tabs: **Cells** (all per-cell metrics), **Mito objects** and **Green puncta** (sortable, filter by cell), **Correlation** (Spearman heatmap of all pairs; click a square for the scatter plot, coloured by cell), and overlay images.
+Tabs: **Cells** (all per-cell metrics; column headers show `(+)` / `(−)`), **Mito objects** and **Green puncta** (sortable, filter by green+ / green− and by cell), **Correlation** (Spearman heatmap of all pairs within all / green+ / green− cells; click a square for the scatter plot, coloured by cell), **Green+ / − cells** (ROI refinement and the green calls), and overlay images.
 
 ## Outputs
-Folder layout: `<output>/<dataset>/<preset>-<dataset>/<sample>/`. Each `<preset>-<dataset>` folder also gets the pooled tables of its samples: `<preset>-<dataset>_all_cells.csv`, `…_all_mito.csv`, `…_all_results.xlsx` (with a `sample` column).
+Folder layout: `<output>/<dataset>/<preset>-<dataset>/<sample>/`. Each `<preset>-<dataset>` folder also gets the pooled tables of its samples: `<preset>-<dataset>_all_cells.csv`, `…_all_mito.csv`, their `_green_pos` / `_green_neg` versions, and `…_all_results.xlsx` (with a `sample` column).
 
 Per sample (in its own folder, prefixed with the sample name):
-- `_results.xlsx` – sheets `cells`, `mito`, `green_puncta`, `correlations`, `settings`
-- `_per_cell.csv`, `_per_mito.csv`, `_green_puncta.csv`, `_correlations.csv` – the same tables as CSV
+- `_results.xlsx` – sheets `cells_green_pos`, `mito_green_pos`, `puncta_green_pos`, `corr_green_pos`, the same four for `green_neg`, then `all_*` (every analysed cell), `roi_refinement` (patches moved between ROIs) and `settings`
+- `_per_cell_green_pos.csv`, `_per_mito_green_pos.csv`, `_green_puncta_green_pos.csv`, `_correlations_green_pos.csv`, the same for `_green_neg`, and the all-cell `_per_cell.csv`, `_per_mito.csv`, `_green_puncta.csv`, `_correlations.csv`
+- `_green_cells.png` – green+ (red) / green− (grey) cells, bright green (yellow), ROIs before refinement (blue dashed)
 - `_green_on_mito.png` – mito objects (magenta), puncta on mito (yellow) / off mito (cyan)
 - `_mito_RoiSet.zip`, `_green_puncta_RoiSet.zip` – mito objects and puncta as ImageJ ROIs
 - `_mina_overlay.png`, `_mina_cells.png` – full-field and per-cell overlays (magenta footprint, green skeleton, yellow ends, blue junctions)

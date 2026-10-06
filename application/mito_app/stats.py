@@ -22,7 +22,8 @@ CELL_Y = [('green_poi_mean_cell', 'Green mean, whole cell'), ('green_mean_on_mit
           ('manders_m_mito', 'Manders: mito red under puncta'), ('n_green_puncta', 'Green puncta'),
           ('n_puncta_on_mito', 'Green puncta on mito'), ('fraction_puncta_on_mito', 'Fraction of puncta on mito'),
           ('green_puncta_density_per_100um2', 'Puncta per 100 µm²'),
-          ('fraction_mito_with_puncta', 'Fraction of mito objects with puncta')]
+          ('fraction_mito_with_puncta', 'Fraction of mito objects with puncta'),
+          ('green_bright_area_percent', 'Bright green area (% cytoplasm)')]
 MITO_X = [('length_um', 'Length (µm)'), ('aspect_ratio', 'Aspect ratio'), ('area_um2', 'Area (µm²)'),
           ('n_branches', 'Branches'), ('n_junctions', 'Junctions'), ('n_endpoints', 'End points'),
           ('solidity', 'Solidity'), ('form_factor', 'Form factor'), ('major_axis_um', 'Major axis (µm)'), ('red_mean', 'Red mean')]
