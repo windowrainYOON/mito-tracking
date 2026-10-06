@@ -107,9 +107,9 @@ def main(argv=None):
     nuc = np.where(dim > 0, dim, nuc0)
     seg = cell_roi.segment(gn, nuclei=nuc, k=k)
     morph = cell_roi.segment_morph(red, nuc, seg['landscape'], px, k)
-    lab = morph['labels']
-    md, ridge, fg = morph['mito_density'], morph['ridge'], morph['fg']
-    cost = (1 - md) + ridge + seg['landscape']
+    md, ridge, fg, cost = morph['mito_density'], morph['ridge'], morph['fg'], morph['cost']
+    lab, trimmed = cell_roi.trim_edge_cells(morph['labels'], nuc, cost, md, px)
+    cut = (morph['labels'] > 0) & (lab == 0)
     gstatus, ginfo = green_cells.classify(gn, lab, nuc, k)
     R, Gc, B = norm(red), norm(green), norm(nuc_img)
     um = lambda v: v / px  # noqa: E731
@@ -227,6 +227,9 @@ def main(argv=None):
         def roi_panel(ax):
             img = outline(rgb(R, R * 0.55, B * 0.8), lab)
             ax.imshow(img); ax.set_axis_off()
+            if cut.any():
+                ax.contourf(cut, [0.5, 1.5], colors='none', hatches=['////'])
+                ax.contour(cut, [0.5], colors='#40c0ff', linewidths=1)
             label_cells(ax, lab, {l: f'{l}' + ('*' if l > n_focus else '') + ('' if l in ok_ids else ' (edge)')
                                   for l in np.unique(lab[lab > 0])})
         page(pdf, '1-3단계 — 세포 ROI: 핵에서 고르게 퍼지는 watershed',
@@ -239,10 +242,17 @@ def main(argv=None):
              'compactness(0.003)를 주어 핵에서 멀어질수록 비용이 조금씩\n'
              '늘게 합니다 → 각 세포가 핵을 중심으로 고르게(마름모꼴에 가깝게)\n'
              '자라고, 한 세포가 길게 뻗어 이웃을 삼키지 않습니다.\n\n'
-             '마지막으로 ROI를 매끄럽게 다듬고(열림 연산, 핵은 유지),\n'
-             '이미지 가장자리에 닿는 세포는 "edge"로 분석에서 뺍니다\n'
-             '(옵션으로 포함 가능). * = 흐린 핵에서 자란 세포.\n\n'
-             f'이 이미지: 세포 ROI {int(lab.max())}개, 분석 대상 {len(ok_ids)}개',
+             '마지막으로 ROI를 매끄럽게 다듬습니다(열림 연산, 핵은 유지).\n\n'
+             '가장자리 끝부분 잘라내기: 핵은 안쪽에 있는데 세포 끝부분만\n'
+             '이미지 가장자리에 닿는 세포는, 핵 쪽과 가장자리 쪽 두 씨앗으로\n'
+             '세포 안을 다시 나눠 미토콘드리아가 끊어지는 선에서 자릅니다.\n'
+             '그 선이 실제로 어둡고(선 위 밀도 ≤ 0.8 × 세포질), 남는 부분이\n'
+             '세포의 55 % 이상이며 둥글고(solidity ≥ 0.75) 더는 가장자리를\n'
+             '따라 붙어 있지 않을 때만 자르고 분석합니다 (빗금 = 잘라낸 부분).\n'
+             '그래도 가장자리에 닿는 세포는 "edge"로 뺍니다 (옵션으로 포함\n'
+             '가능). * = 흐린 핵에서 자란 세포.\n\n'
+             f'이 이미지: 세포 ROI {int(lab.max())}개, 끝부분을 잘라 살린 세포 {len(trimmed)}개, '
+             f'분석 대상 {len(ok_ids)}개',
              [('비용 지도 (밝을수록 넘기 어려움)', np.clip(cost / np.percentile(cost, 99), 0, 1), 'inferno'),
               ('최종 세포 ROI (청록), 번호', roi_panel)], cols=2)
 

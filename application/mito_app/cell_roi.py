@@ -183,7 +183,61 @@ def segment_morph(red, nuclei, landscape, px, k=1.0, fg_level=0.12, compactness=
     fg = morphology.remove_small_holes(fg, max_size=int(200 / px / px))
     cost = mito_weight * (1 - md) + mito_weight * ridge + landscape
     lab = segmentation.watershed(cost, nuclei, mask=fg, compactness=compactness / k)
-    return dict(labels=smooth_labels(lab, nuclei, k), fg=fg, mito_density=md, ridge=ridge)
+    return dict(labels=smooth_labels(lab, nuclei, k), fg=fg, mito_density=md, ridge=ridge, cost=cost)
+
+
+def trim_edge_cells(lab, nuclei, cost, md, px, margin=3, nuc_gap_um=3.0, halo_um=2.0, min_keep=0.55,
+                    max_line=0.8, sliver=0.1, min_solidity=0.75, min_cyto=0.5, max_contact_um=3.0):
+    """Rescue cells whose nucleus is well inside the frame but whose ROI reaches the frame with a tip.
+
+    Inside each such ROI a two-seed watershed on the border cost (high on mito-free lines) splits the cell
+    between its nucleus (+ a `halo_um` ring of cytoplasm) and the pixels on the frame. The frame-side part
+    is cut away when the cut follows a mito-free line (median mito density on the cut <= `max_line` x the
+    kept cytoplasm, or the cut-away part is a sliver < `sliver` of the ROI), the kept part holds >= `min_keep`
+    of the ROI, has cytoplasm >= `min_cyto` x the nucleus area, is compact (solidity >= `min_solidity`), its
+    nucleus is >= `nuc_gap_um` from the frame and from the cut, and it no longer runs along the frame (contact
+    <= `max_contact_um`, the ends of the cut). Returns the new labels and {label: trimmed area in px}.
+    """
+    H, W = lab.shape
+    frame = np.zeros(lab.shape, bool)
+    frame[:margin + 1] = frame[-margin - 1:] = True; frame[:, :margin + 1] = frame[:, -margin - 1:] = True
+    near_frame = ndi.binary_dilation(frame, iterations=2)
+    dfr = ndi.distance_transform_edt(~frame)
+    out = lab.copy(); trimmed = {}
+    for r in measure.regionprops(lab):
+        y0, x0, y1, x1 = r.bbox
+        if not (y0 <= margin or x0 <= margin or y1 >= H - margin or x1 >= W - margin):
+            continue
+        sl = (slice(y0, y1), slice(x0, x1))
+        cell = lab[sl] == r.label; n = (nuclei[sl] == r.label) & cell
+        fr = frame[sl] & cell
+        if not n.any() or not fr.any() or dfr[sl][n].min() < nuc_gap_um / px:
+            continue
+        mk = np.zeros(cell.shape, int)
+        mk[ndi.binary_dilation(n, morphology.disk(max(1, round(halo_um / px)))) & cell & ~near_frame[sl]] = 1
+        mk[fr] = 2
+        c = cost[sl].copy(); c[n] = c.min()
+        ws = segmentation.watershed(c, mk, mask=cell)
+        cc = measure.label(ws == 1)
+        keep = cc == np.bincount(cc[n]).argmax() if cc[n].any() else np.zeros_like(cell)
+        cut = cell & ~keep
+        if keep.sum() < min_keep * cell.sum() or keep.sum() - n.sum() < min_cyto * n.sum():
+            continue
+        line = keep & ndi.binary_dilation(cut) & ~near_frame[sl]
+        if not line.any():
+            continue
+        dark = np.median(md[sl][line]) <= max_line * np.median(md[sl][keep & ~n])
+        if not (dark or cut.sum() < sliver * cell.sum()):
+            continue
+        if ndi.distance_transform_edt(~line)[n].min() < nuc_gap_um / px:
+            continue
+        if (keep & near_frame[sl] & ~ndi.binary_dilation(line, iterations=3)).sum() > max_contact_um / px:
+            continue
+        if measure.regionprops(keep.astype(int))[0].solidity < min_solidity:
+            continue
+        out[sl][cut] = 0
+        trimmed[r.label] = int(cut.sum())
+    return out, trimmed
 
 
 def smooth_labels(lab, keep=None, k=1.0):
@@ -280,6 +334,9 @@ def save_outputs(a, g, res, px_um, outdir, prefix, edge_margin=3, binuc_tau=0.0,
                    ha='center', va='center', weight='bold', bbox=dict(fc='k', alpha=0.5, lw=0))
     if res.get('nuclei') is not None:
         ax[2].contour(res['nuclei'] > 0, [0.5], colors='w', linewidths=0.8, linestyles='--')
+        if res.get('trimmed') is not None and res['trimmed'].any():
+            ax[2].contourf(res['trimmed'], [0.5, 1.5], colors='none', hatches=['////'])
+            ax[2].contour(res['trimmed'], [0.5], colors='#40c0ff', linewidths=1)
         ax[0].imshow(np.dstack([sat[..., 1] * 0.3, sat[..., 1], np.clip(res['nuc_img'] / max(np.percentile(res['nuc_img'], 99.5), 1e-9), 0, 1)]))
         ax[0].set_title('mito (G, saturated) + nuclei (B)')
     n_ok = sum(r.get('status', 'ok') == 'ok' for r in rows)

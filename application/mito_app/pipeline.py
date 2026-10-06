@@ -28,6 +28,7 @@ class Params:
     mito_method: str = 'split'        # 'split' = adaptive threshold + watershed objects, 'otsu' = MiNA classic
     green_pos_percent: float = 2.0    # cell is green-positive if bright green covers >= this % of its cytoplasm
     dim_nuclei: bool = True           # out-of-focus nuclei also seed (and own) a cell
+    trim_edge_cells: bool = True      # cut a frame-touching tip off along a mito-free line so the cell is kept
     nuclei_method: str = 'texture_merge'  # nucleus detection: 'texture_merge', 'texture' or 'otsu' (mito_app/nuclei.py)
 
 
@@ -215,6 +216,13 @@ def run(red_path, green_path, blue_path, outdir, params=None, name=None, log=pri
     res['nuc_img'] = nuc_img
     morph = cell_roi.segment_morph(red, nuc, res['landscape'], px, k)
     res['labels'], res['fg'] = morph['labels'], morph['fg']
+    trimmed = {}
+    if p.trim_edge_cells:
+        lab0 = res['labels']
+        res['labels'], trimmed = cell_roi.trim_edge_cells(lab0, nuc, morph['cost'], morph['mito_density'], px)
+        res['trimmed'] = (lab0 > 0) & (res['labels'] == 0)
+        if trimmed:
+            log(f'     {len(trimmed)} cells at the frame kept by cutting their tip off along a mito-free line')
     gstatus, ginfo = green_cells.classify(gn, res['labels'], nuc, k, p.green_pos_percent / 100)
     rois = cell_roi.save_outputs(a, gn, res, px, outdir, name, binuc_tau=p.binuc_tau,
                                  exclude_binuc=p.exclude_binucleate)
@@ -222,6 +230,7 @@ def run(red_path, green_path, blue_path, outdir, params=None, name=None, log=pri
     for r in rois:
         r['green_status'] = gstatus[int(r['roi'][4:])]
         r['seed'] = 'dim nucleus' if int(r['roi'][4:]) > n_focus else 'nucleus'
+        r['edge_trimmed_um2'] = round(trimmed.get(int(r['roi'][4:]), 0) * px * px, 1)
     log(f'     {len(rois)} cell ROIs, {n_ok} pass QC (not touching the border'
         + (', not binucleate)' if p.exclude_binucleate else ')'))
 
@@ -311,7 +320,7 @@ def run(red_path, green_path, blue_path, outdir, params=None, name=None, log=pri
 GREEN_GROUPS = (('positive', 'green_pos'), ('negative', 'green_neg'))
 
 
-PER_CELL_ROI_COLS = ('seed', 'centroid_x', 'centroid_y', 'touches_border', 'weak_border_with')
+PER_CELL_ROI_COLS = ('seed', 'edge_trimmed_um2', 'centroid_x', 'centroid_y', 'touches_border', 'weak_border_with')
 
 
 def merge_cell_rows(rois, rows):

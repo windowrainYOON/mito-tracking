@@ -629,6 +629,11 @@ class MainWindow(QMainWindow):
                                     '(< 0.75 of the dimmer peak) and narrow (shorter than the thinner width), '
                                     'with a 1-px gap, before MiNA. MiNA classic uses one Otsu threshold per cell.')
         self.excl_binuc = QCheckBox('Exclude cells that share a weak border (look binucleate)')
+        self.trim_edge = QCheckBox('Keep cells whose tip touches the border (cut the tip off at a mito-free line)')
+        self.trim_edge.setChecked(True)
+        self.trim_edge.setToolTip('A cell whose nucleus is well inside the image but whose ROI reaches the border '
+                                  'is cut along the mito-free line (and its shape) between its body and the border, '
+                                  'when such a line exists, and analysed. The cut-off part is hatched in the summary.')
         self.incl_edge = QCheckBox('Also analyse cells touching the image border')
         self.min_area = self._spin(0, 1e5, 250, 1, ' µm²')
         self.binuc_tau = self._spin(-1, 1, 0.0, 3, '', 0.01,
@@ -652,7 +657,7 @@ class MainWindow(QMainWindow):
                                     'A cell is green-positive when bright green covers at least this share of its '
                                     'cytoplasm (cell minus nucleus)')
         of.addRow('Mito segmentation', self.mito_method)
-        of.addRow(self.excl_binuc); of.addRow(self.incl_edge)
+        of.addRow(self.excl_binuc); of.addRow(self.trim_edge); of.addRow(self.incl_edge)
         of.addRow('Minimum cell area', self.min_area)
         of.addRow('Weak-border threshold', self.binuc_tau)
         of.addRow('Pixel size (0 = auto)', self.px)
@@ -805,7 +810,8 @@ class MainWindow(QMainWindow):
             return
         params = pipeline.Params(min_area_um2=self.min_area.value(), binuc_tau=self.binuc_tau.value(),
                                  exclude_binucleate=self.excl_binuc.isChecked(),
-                                 include_edge_cells=self.incl_edge.isChecked(), pixel_size_um=self.px.value(),
+                                 include_edge_cells=self.incl_edge.isChecked(), trim_edge_cells=self.trim_edge.isChecked(),
+                                 pixel_size_um=self.px.value(),
                                  puncta_sensitivity=self.sens.value(), min_mito_area_um2=self.min_mito.value(),
                                  mito_method=self.mito_method.currentData(),
                                  green_pos_percent=self.green_pos.value(), dim_nuclei=self.dim_nuclei.isChecked(),
