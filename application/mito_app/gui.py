@@ -11,7 +11,7 @@ from PySide6.QtCore import QAbstractTableModel, QModelIndex, QObject, QSortFilte
 from PySide6.QtGui import QDesktopServices, QIcon, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout, QGroupBox,
-    QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMainWindow, QMessageBox, QPlainTextEdit, QPushButton, QScrollArea,
+    QDialog, QDialogButtonBox, QHBoxLayout, QHeaderView, QInputDialog, QLabel, QLineEdit, QMainWindow, QMessageBox, QPlainTextEdit, QPushButton, QScrollArea,
     QSplitter, QTableView, QTableWidget, QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget,
 )
 
@@ -66,9 +66,9 @@ class Worker(QObject):
 
 class JobTable(QTableWidget):
     """Input table, one image set per row. Accepts dropped TIFFs / folders."""
-    COLS = ('Dataset', 'Preset', 'Sample', 'Red', 'Green', 'Blue', 'Status')
-    DATASET, PRESET, NAME, RED, GREEN, BLUE, STATUS = range(7)
-    CH_COL = {'red': 3, 'green': 4, 'blue': 5}
+    COLS = ('Group', 'Dataset', 'Preset', 'Sample', 'Red', 'Green', 'Blue', 'Status')
+    GROUP, DATASET, PRESET, NAME, RED, GREEN, BLUE, STATUS = range(8)
+    CH_COL = {'red': 4, 'green': 5, 'blue': 6}
     dropped = Signal(list)
 
     def __init__(self):
@@ -80,7 +80,7 @@ class JobTable(QTableWidget):
         self.setAlternatingRowColors(True)
         self.verticalHeader().setDefaultSectionSize(22)
         h = self.horizontalHeader(); h.setSectionResizeMode(QHeaderView.Interactive); h.setStretchLastSection(True)
-        for c, w in zip(range(7), (70, 50, 80, 92, 92, 92, 60)):
+        for c, w in zip(range(8), (70, 70, 50, 80, 92, 92, 92, 60)):
             self.setColumnWidth(c, w)
         self.setAcceptDrops(True)
 
@@ -101,10 +101,13 @@ class JobTable(QTableWidget):
 
     def add_set(self, s, preset):
         r = self.rowCount(); self.insertRow(r)
-        texts = (s.get('dataset') or os.path.basename(os.path.dirname(s['red'])), preset,
-                 s.get('name') or pipeline.sample_name(s['red']))
+        dataset = s.get('dataset') or os.path.basename(os.path.dirname(s['red']))
+        texts = (dataset, dataset, preset, s.get('name') or pipeline.sample_name(s['red']))
         for c, t in enumerate(texts):
             self.setItem(r, c, QTableWidgetItem(t))
+        self.item(r, self.DATASET).setData(Qt.UserRole, s.get('root') or os.path.dirname(s['red']))
+        self.item(r, self.GROUP).setToolTip('Group for the group comparison in the Analysis tab (default: the dataset). '
+                                            'Select rows and press "Set group…" to group several sets.')
         for k, c in self.CH_COL.items():
             self.set_path(r, k, s[k])
         st = QTableWidgetItem('ready'); st.setFlags(st.flags() & ~Qt.ItemIsEditable)
@@ -122,8 +125,13 @@ class JobTable(QTableWidget):
     def job(self, r):
         d = {k: self.item(r, c).data(Qt.UserRole) for k, c in self.CH_COL.items()}
         d.update(dataset=self.text(r, self.DATASET) or 'dataset', preset=self.text(r, self.PRESET),
-                 name=self.text(r, self.NAME) or pipeline.sample_name(d['red']))
+                 name=self.text(r, self.NAME) or pipeline.sample_name(d['red']),
+                 root=self.item(r, self.DATASET).data(Qt.UserRole) or os.path.dirname(d['red']))
+        d['group'] = self.text(r, self.GROUP) or d['dataset']
         return d
+
+    def groups(self):
+        return sorted({self.text(r, self.GROUP) for r in range(self.rowCount())} - {''})
 
     def set_status(self, r, text, result=None, tip=''):
         it = self.item(r, self.STATUS); it.setText(text); it.setToolTip(tip)
@@ -277,11 +285,11 @@ class CorrelationTab(QWidget):
         self.level = QComboBox(); self.level.addItem('Per cell', 'cell'); self.level.addItem('Per mito object', 'mito')
         self.group = green_group_combo()
         self.x = QComboBox(); self.y = QComboBox(); self.cell = QComboBox()
-        self.dataset = QComboBox(); self.preset = QComboBox(); self.sample = QComboBox()
+        self.grp = QComboBox(); self.dataset = QComboBox(); self.preset = QComboBox(); self.sample = QComboBox()
         self.hstat = QComboBox(); self.hstat.addItem('Pearson r', 'r'); self.hstat.addItem('Spearman ρ', 'rho')
         self.center = QComboBox(); self.center.addItem('mean', 'mean'); self.center.addItem('median', 'median')
         self.color = QComboBox()
-        for label, key in (('green status', 'green_status'), ('sample', 'sample'), ('dataset', 'dataset'),
+        for label, key in (('green status', 'green_status'), ('group', 'group'), ('sample', 'sample'), ('dataset', 'dataset'),
                            ('preset', 'preset'), ('none', '')):
             self.color.addItem(label, key)
         self.logx = QCheckBox('log X'); self.logy = QCheckBox('log Y')
@@ -289,7 +297,8 @@ class CorrelationTab(QWidget):
         for w in (QLabel('Level'), self.level, QLabel('Cells'), self.group):
             row1.addWidget(w)
         if pooled:
-            for w in (QLabel('Dataset'), self.dataset, QLabel('Preset'), self.preset, QLabel('Sample'), self.sample):
+            for w in (QLabel('Group'), self.grp, QLabel('Dataset'), self.dataset, QLabel('Preset'), self.preset,
+                      QLabel('Sample'), self.sample):
                 row1.addWidget(w)
         else:
             row1.addWidget(QLabel('Cell')); row1.addWidget(self.cell)
@@ -317,7 +326,7 @@ class CorrelationTab(QWidget):
                       'independent, so per-object p values are optimistic.')
         note.setWordWrap(True); lay.addWidget(note)
         self.level.currentIndexChanged.connect(self.level_changed)
-        for w in (self.group, self.dataset, self.preset, self.sample):
+        for w in (self.group, self.grp, self.dataset, self.preset, self.sample):
             w.currentIndexChanged.connect(self.filters_changed)
         for w in (self.x, self.y, self.cell, self.center, self.color):
             w.currentIndexChanged.connect(self.draw_scatter)
@@ -332,7 +341,8 @@ class CorrelationTab(QWidget):
 
     def set_data(self, cell_rows, mito_rows):
         self.data = {'cell': cell_rows, 'mito': mito_rows}
-        for combo, key in ((self.dataset, 'dataset'), (self.preset, 'preset'), (self.sample, 'sample')):
+        for combo, key in ((self.grp, 'group'), (self.dataset, 'dataset'), (self.preset, 'preset'),
+                           (self.sample, 'sample')):
             combo.blockSignals(True); combo.clear()
             combo.addItems(['All'] + sorted({str(r.get(key, '')) for r in cell_rows + mito_rows}))
             combo.blockSignals(False)
@@ -347,7 +357,8 @@ class CorrelationTab(QWidget):
     def base_rows(self, level=None):
         rows = filter_group(self.data[level or self.level.currentData()], self.group.currentData())
         if self.pooled:
-            for combo, key in ((self.dataset, 'dataset'), (self.preset, 'preset'), (self.sample, 'sample')):
+            for combo, key in ((self.grp, 'group'), (self.dataset, 'dataset'), (self.preset, 'preset'),
+                           (self.sample, 'sample')):
                 v = combo.currentText()
                 if v not in ('All', ''):
                     rows = [r for r in rows if str(r.get(key, '')) == v]
@@ -538,6 +549,299 @@ class CorrelationTab(QWidget):
                                 f'table written to {d} (pooled_*_{tag}.*)')
 
 
+def group_combo():
+    c = QComboBox(); c.setSizeAdjustPolicy(QComboBox.AdjustToContents)
+    return c
+
+
+class GroupCorrTab(QWidget):
+    """Correlation heatmaps of two groups side by side and the difference between them (B − A).
+
+    The difference map marks pairs whose correlations differ by a Fisher z test (* p < 0.05, ** p < 0.01);
+    the largest differences are listed below it."""
+
+    def __init__(self):
+        super().__init__()
+        self.data = {'cell': [], 'mito': []}
+        self.level = QComboBox(); self.level.addItem('Per cell', 'cell'); self.level.addItem('Per mito object', 'mito')
+        self.green = green_group_combo()
+        self.a, self.b = group_combo(), group_combo()
+        self.hstat = QComboBox(); self.hstat.addItem('Pearson r', 'r'); self.hstat.addItem('Spearman ρ', 'rho')
+        self.export_btn = QPushButton('Export…')
+        row = QHBoxLayout()
+        for w in (QLabel('Level'), self.level, QLabel('Cells'), self.green, QLabel('Group A'), self.a,
+                  QLabel('Group B'), self.b, QLabel('Statistic'), self.hstat):
+            row.addWidget(w)
+        row.addStretch(1); row.addWidget(self.export_btn)
+        self.fig = Figure(figsize=(14, 5)); self.canvas = FigureCanvasQTAgg(self.fig)
+        self.canvas.mpl_connect('motion_notify_event', self.on_hover)
+        self.top = QLabel(); self.top.setTextInteractionFlags(Qt.TextSelectableByMouse); self.top.setWordWrap(True)
+        self.top.setStyleSheet('font-family: Menlo, Consolas, monospace; font-size: 11px;')
+        lay = QVBoxLayout(self); lay.addLayout(row); lay.addWidget(self.canvas, 1); lay.addWidget(self.top)
+        note = QLabel('Each heatmap is computed from the cells (or mito objects) of one group. Δ = B − A; '
+                      '* p < 0.05, ** p < 0.01 (Fisher z test for two independent correlations). '
+                      'Hover a square for the values.')
+        note.setWordWrap(True); lay.addWidget(note)
+        for w in (self.level, self.green, self.a, self.b, self.hstat):
+            w.currentIndexChanged.connect(self.draw)
+        self.export_btn.clicked.connect(self.export)
+        self.res = None
+
+    def set_data(self, cell_rows, mito_rows):
+        self.data = {'cell': cell_rows, 'mito': mito_rows}
+        groups = sorted({str(r.get('group', '')) for r in cell_rows + mito_rows})
+        for n, c in enumerate((self.a, self.b)):
+            cur = c.currentText()
+            c.blockSignals(True); c.clear(); c.addItems(groups)
+            c.setCurrentIndex(groups.index(cur) if cur in groups else min(n, len(groups) - 1))
+            c.blockSignals(False)
+        self.draw()
+
+    def compute(self):
+        lv = self.level.currentData()
+        rows = filter_group(self.data[lv], self.green.currentData())
+        xs, ys = (stats.CELL_X, stats.CELL_Y) if lv == 'cell' else (stats.MITO_X, stats.MITO_Y)
+        xs, ys = stats.available(xs, rows), stats.available(ys, rows)
+        ga, gb = self.a.currentText(), self.b.currentText()
+        ra = [r for r in rows if str(r.get('group', '')) == ga]
+        rb = [r for r in rows if str(r.get('group', '')) == gb]
+        m = self.hstat.currentData()
+        va, na = stats.corr_matrix(ra, xs, ys, m)
+        vb, nb = stats.corr_matrix(rb, xs, ys, m)
+        return dict(xs=xs, ys=ys, ga=ga, gb=gb, va=va, vb=vb, na=na, nb=nb, d=vb - va,
+                    p=stats.corr_diff_p(va, na, vb, nb), nra=len(ra), nrb=len(rb))
+
+    def draw(self, *_):
+        f = self.fig; f.clear()
+        if not (self.data['cell'] or self.data['mito']) or not self.a.count():
+            self.canvas.draw_idle(); return
+        self.res = R = self.compute()
+        name = self.hstat.currentText()
+        unit = 'cells' if self.level.currentData() == 'cell' else 'mito objects'
+        axs = f.subplots(1, 3, sharey=True)
+        dmax = max(0.5, float(np.nanmax(np.abs(R['d']))) if np.isfinite(R['d']).any() else 0.5)
+        for ax, v, title, cmap, lim in ((axs[0], R['va'], f"A: {R['ga']} (n = {R['nra']} {unit})", 'RdBu_r', 1),
+                                        (axs[1], R['vb'], f"B: {R['gb']} (n = {R['nrb']} {unit})", 'RdBu_r', 1),
+                                        (axs[2], R['d'], f'Δ {name} (B − A)', 'PuOr_r', dmax)):
+            im = ax.imshow(v, cmap=cmap, vmin=-lim, vmax=lim, aspect='auto')
+            ax.set_xticks(range(len(R['xs'])), [l for _, l in R['xs']], rotation=60, ha='right', fontsize=6)
+            ax.set_title(title, fontsize=9)
+            f.colorbar(im, ax=ax, fraction=0.05, pad=0.02)
+        axs[0].set_yticks(range(len(R['ys'])), [l for _, l in R['ys']], fontsize=6)
+        for i in range(R['d'].shape[0]):
+            for j in range(R['d'].shape[1]):
+                p = R['p'][i, j]
+                if np.isfinite(p) and p < 0.05:
+                    axs[2].text(j, i, '**' if p < 0.01 else '*', ha='center', va='center', fontsize=8, color='black')
+        f.tight_layout(); self.canvas.draw_idle()
+        order = [(i, j) for i in range(R['d'].shape[0]) for j in range(R['d'].shape[1]) if np.isfinite(R['d'][i, j])]
+        order.sort(key=lambda ij: -abs(R['d'][ij]))
+        lines = [f'Largest differences in {name} (B − A):']
+        for i, j in order[:8]:
+            p = R['p'][i, j]
+            lines.append(f"  {R['ys'][i][1]} vs {R['xs'][j][1]}:  A {R['va'][i, j]:+.2f} (n={R['na'][i, j]})  "
+                         f"B {R['vb'][i, j]:+.2f} (n={R['nb'][i, j]})  Δ {R['d'][i, j]:+.2f}  "
+                         f"p = {p:.2g}" + (' *' if np.isfinite(p) and p < 0.05 else ''))
+        if not order:
+            lines.append('  none computable: each group needs at least 3 ' + unit)
+        self.top.setText('\n'.join(lines))
+
+    def on_hover(self, ev):
+        R = self.res
+        if R is None or ev.inaxes is None or ev.xdata is None:
+            return
+        j, i = int(round(ev.xdata)), int(round(ev.ydata))
+        if 0 <= i < R['d'].shape[0] and 0 <= j < R['d'].shape[1]:
+            self.canvas.setToolTip(f"{R['ys'][i][1]} vs {R['xs'][j][1]}\nA ({R['ga']}): {R['va'][i, j]:.3f}, "
+                                   f"n = {R['na'][i, j]}\nB ({R['gb']}): {R['vb'][i, j]:.3f}, n = {R['nb'][i, j]}\n"
+                                   f"Δ = {R['d'][i, j]:.3f}, p = {R['p'][i, j]:.3g}")
+
+    def export(self):
+        R = self.res
+        if R is None:
+            return
+        path, _ = QFileDialog.getSaveFileName(self, 'Export group correlation comparison',
+                                              os.path.join(getattr(self, 'export_dir', ''),
+                                                           f"group_corr_{R['ga']}_vs_{R['gb']}.csv"), 'CSV (*.csv)')
+        if not path:
+            return
+        rows = [dict(y=R['ys'][i][0], x=R['xs'][j][0], **{f"{self.hstat.currentData()}_A ({R['ga']})": R['va'][i, j],
+                                                          'n_A': R['na'][i, j],
+                                                          f"{self.hstat.currentData()}_B ({R['gb']})": R['vb'][i, j],
+                                                          'n_B': R['nb'][i, j], 'delta_B_minus_A': R['d'][i, j],
+                                                          'p_fisher_z': R['p'][i, j]})
+                for i in range(len(R['ys'])) for j in range(len(R['xs']))]
+        pipeline.write_csv(path, rows)
+
+
+ERRORS = (('mean ± SD', 'mean', 'sd'), ('mean ± SEM', 'mean', 'sem'), ('mean ± 95% CI', 'mean', 'ci95'),
+          ('median ± IQR', 'median', 'iqr'))
+
+
+class GroupStatsTab(QWidget):
+    """Every metric compared across groups: mean / median with error bars over the individual values, and a
+    table of n, mean, SD, SEM, 95 % CI, median and IQR per group with the across-group tests."""
+
+    def __init__(self):
+        super().__init__()
+        self.data = {'cell': [], 'mito': []}
+        self.level = QComboBox(); self.level.addItem('Per cell', 'cell'); self.level.addItem('Per mito object', 'mito')
+        self.green = green_group_combo()
+        self.unit = QComboBox()
+        self.unit.addItem('cells / objects', 'row'); self.unit.addItem('images (mean per image)', 'image')
+        self.unit.setToolTip('Images: each image counts once (the mean of its cells), so a group with many cells '
+                             'from few images is not over-weighted')
+        self.metric = QComboBox(); self.metric.setSizeAdjustPolicy(QComboBox.AdjustToContents)
+        self.err = QComboBox()
+        for label, *_ in ERRORS:
+            self.err.addItem(label)
+        self.export_btn = QPushButton('Export…')
+        row = QHBoxLayout()
+        for w in (QLabel('Level'), self.level, QLabel('Cells'), self.green, QLabel('Unit'), self.unit,
+                  QLabel('Metric'), self.metric, QLabel('Show'), self.err):
+            row.addWidget(w)
+        row.addStretch(1); row.addWidget(self.export_btn)
+        self.fig = Figure(figsize=(6, 4)); self.canvas = FigureCanvasQTAgg(self.fig)
+        self.table = TableTab(cell_filter=False)
+        self.table.view.clicked.connect(self.row_clicked)
+        split = QSplitter(Qt.Vertical); split.addWidget(self.canvas); split.addWidget(self.table)
+        split.setSizes([450, 350])
+        lay = QVBoxLayout(self); lay.addLayout(row); lay.addWidget(split, 1)
+        note = QLabel('Points = individual cells / objects (or image means); bar = the chosen centre and error. '
+                      'Two groups: Welch t test and Mann-Whitney U; more groups: one-way ANOVA and Kruskal-Wallis. '
+                      'Click a table row to plot that metric.')
+        note.setWordWrap(True); lay.addWidget(note)
+        self.level.currentIndexChanged.connect(self.level_changed)
+        for w in (self.green, self.unit):
+            w.currentIndexChanged.connect(self.refresh)
+        for w in (self.metric, self.err):
+            w.currentIndexChanged.connect(self.draw)
+        self.export_btn.clicked.connect(self.export)
+        self.summary = []
+
+    def set_data(self, cell_rows, mito_rows):
+        self.data = {'cell': cell_rows, 'mito': mito_rows}
+        self.level_changed()
+
+    def metrics(self):
+        lv = self.level.currentData()
+        xs, ys = (stats.CELL_X, stats.CELL_Y) if lv == 'cell' else (stats.MITO_X, stats.MITO_Y)
+        return stats.available(xs + ys, self.data[lv])
+
+    def level_changed(self, *_):
+        cur = self.metric.currentData()
+        self.metric.blockSignals(True); self.metric.clear()
+        for k, label in self.metrics():
+            self.metric.addItem(label, k)
+        i = self.metric.findData(cur)
+        self.metric.setCurrentIndex(max(i, 0)); self.metric.blockSignals(False)
+        self.refresh()
+
+    def rows(self):
+        rows = filter_group(self.data[self.level.currentData()], self.green.currentData())
+        if self.unit.currentData() == 'image':
+            rows = stats.sample_means(rows, [k for k, _ in self.metrics()])
+        return rows
+
+    def groups(self):
+        return sorted({str(r.get('group', '')) for r in self.data['cell'] + self.data['mito']})
+
+    def refresh(self, *_):
+        self.summary = stats.group_summary(self.rows(), self.metrics(), self.groups())
+        self.table.set_rows(self.summary)
+        self.draw()
+
+    def row_clicked(self, idx):
+        r = self.table.proxy.mapToSource(idx).row()
+        if 0 <= r < len(self.table.model.rows):
+            i = self.metric.findData(self.table.model.rows[r].get('column'))
+            if i >= 0:
+                self.metric.setCurrentIndex(i)
+
+    def draw(self, *_):
+        f = self.fig; f.clear(); ax = f.add_subplot(111)
+        mk = self.metric.currentData(); groups = self.groups()
+        if not mk or not groups:
+            self.canvas.draw_idle(); return
+        rows = self.rows()
+        _, center, err = ERRORS[self.err.currentIndex()]
+        rng = np.random.default_rng(0)
+        arrays = []
+        for n, g in enumerate(groups):
+            v = stats.numeric([r for r in rows if str(r.get('group', '')) == g], mk); v = v[np.isfinite(v)]
+            arrays.append(v)
+            color = CELL_COLORS[n % len(CELL_COLORS)]
+            ax.scatter(n + rng.uniform(-0.18, 0.18, len(v)), v, s=10 if len(v) > 100 else 22, alpha=0.5,
+                       color=color, edgecolors='none')
+            d = stats.describe(v)
+            if not d['n']:
+                continue
+            c = d[center]
+            lo, hi = (c - d['q1'], d['q3'] - c) if err == 'iqr' else (d[err], d[err])
+            ax.errorbar(n, c, yerr=[[np.nan_to_num(lo)], [np.nan_to_num(hi)]], fmt='_', color='black', ms=28,
+                        mew=2.2, elinewidth=1.4, capsize=8, capthick=1.4, zorder=5)
+        ax.set_xticks(range(len(groups)),
+                      [f'{g}\nn = {len(a)}' for g, a in zip(groups, arrays)], fontsize=8)
+        ax.set_xlim(-0.6, len(groups) - 0.4)
+        ax.set_ylabel(self.metric.currentText())
+        ax.spines[['top', 'right']].set_visible(False)
+        p1, p2, n1, n2 = stats.group_test(arrays)
+        unit = {'row': 'cells' if self.level.currentData() == 'cell' else 'mito objects',
+                'image': 'images'}[self.unit.currentData()]
+        ax.set_title(f'{self.err.currentText()}, unit = {unit};  {n1} p = {p1:.3g},  {n2} p = {p2:.3g}', fontsize=9)
+        f.tight_layout(); self.canvas.draw_idle()
+
+    def export(self):
+        if not self.summary:
+            return
+        tag = 'cells' if self.level.currentData() == 'cell' else 'mito'
+        tag += '_per_image' if self.unit.currentData() == 'image' else ''
+        path, _ = QFileDialog.getSaveFileName(self, 'Export group statistics',
+                                              os.path.join(getattr(self, 'export_dir', ''), f'group_stats_{tag}.csv'),
+                                              'CSV (*.csv)')
+        if path:
+            pipeline.write_csv(path, self.summary)
+
+
+class GroupEditor(QDialog):
+    """Edit the group of each sample of a results folder (saved to <folder>/groups.csv)."""
+
+    def __init__(self, samples, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle('Groups'); self.resize(640, 480)
+        self.samples = samples
+        self.table = QTableWidget(len(samples), 4)
+        self.table.setHorizontalHeaderLabels(('Group', 'Dataset', 'Preset', 'Sample'))
+        self.table.horizontalHeader().setStretchLastSection(True)
+        for r, s in enumerate(samples):
+            for c, k in enumerate(('group', 'dataset', 'preset', 'sample')):
+                it = QTableWidgetItem(str(s[k]))
+                if c:
+                    it.setFlags(it.flags() & ~Qt.ItemIsEditable)
+                self.table.setItem(r, c, it)
+        setb = QPushButton('Set group for selected…'); setb.clicked.connect(self.set_selected)
+        bb = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
+        bb.accepted.connect(self.accept); bb.rejected.connect(self.reject)
+        lay = QVBoxLayout(self)
+        lay.addWidget(QLabel('Edit the Group column (double-click), or select rows and set one group for them.'))
+        lay.addWidget(self.table, 1); lay.addWidget(setb); lay.addWidget(bb)
+
+    def set_selected(self):
+        rows = sorted({i.row() for i in self.table.selectedIndexes()})
+        if not rows:
+            return
+        names = sorted({self.table.item(r, 0).text() for r in range(self.table.rowCount())})
+        name, ok = QInputDialog.getItem(self, 'Set group', f'Group for {len(rows)} sample(s):', names, 0, True)
+        if ok and name.strip():
+            for r in rows:
+                self.table.item(r, 0).setText(name.strip())
+
+    def entries(self):
+        return [dict(outdir=s['folder'], dataset=s['dataset'], sample=s['sample'],
+                     group=self.table.item(r, 0).text().strip() or s['dataset']) for r, s in enumerate(self.samples)]
+
+
+
 class AnalysisTab(QWidget):
     """Pooled analysis of everything under an output folder (every <sample>_per_cell.csv / _per_mito.csv)."""
 
@@ -546,14 +850,21 @@ class AnalysisTab(QWidget):
         self.folder = QLineEdit(); self.folder.setPlaceholderText('Output folder of earlier runs (searched recursively)')
         browse = QPushButton('Browse…'); browse.clicked.connect(self.browse)
         load = QPushButton('Load'); load.clicked.connect(self.load)
+        self.groups_btn = QPushButton('Groups…'); self.groups_btn.clicked.connect(self.edit_groups)
+        self.groups_btn.setToolTip('Change which group each sample belongs to (saved in groups.csv of the results folder)')
+        self.groups_btn.setEnabled(False)
+        self.samples = []
         self.folder.returnPressed.connect(self.load)
         self.info = QLabel('')
         top = QHBoxLayout(); top.addWidget(QLabel('Results folder')); top.addWidget(self.folder, 1)
-        top.addWidget(browse); top.addWidget(load)
+        top.addWidget(browse); top.addWidget(load); top.addWidget(self.groups_btn)
         self.corr = CorrelationTab(pooled=True)
         self.cells = TableTab(); self.mito = TableTab()
         tabs = QTabWidget()
+        self.gcorr = GroupCorrTab(); self.gstats = GroupStatsTab()
         tabs.addTab(self.corr, 'Regression / correlation')
+        tabs.addTab(self.gcorr, 'Groups: correlation')
+        tabs.addTab(self.gstats, 'Groups: mean / median')
         tabs.addTab(self.cells, 'Cells (all samples)')
         tabs.addTab(self.mito, 'Mito objects (all samples)')
         lay = QVBoxLayout(self); lay.addLayout(top); lay.addWidget(self.info); lay.addWidget(tabs, 1)
@@ -570,16 +881,34 @@ class AnalysisTab(QWidget):
         cells, mito, samples = pipeline.load_results(d)
         if not samples:
             QMessageBox.warning(self, 'Nothing found', f'No <sample>_per_cell.csv found under {d}.'); return
-        self.corr.export_dir = d
-        self.corr.set_data(cells, mito)
+        self.samples = samples; self.root = d; self.groups_btn.setEnabled(True)
+        for t in (self.corr, self.gcorr, self.gstats):
+            t.export_dir = d
+            t.set_data(cells, mito)
         self.cells.set_rows(cells); self.mito.set_rows(mito)
         n_pos = sum(r.get('green_status') == 'positive' for r in cells)
         n_ds = len({r['dataset'] for r in cells}); n_pr = len({(r['dataset'], r['preset']) for r in cells})
-        self.info.setText(f'{len(samples)} samples ({n_ds} dataset(s), {n_pr} preset-dataset folder(s)): '
+        groups = sorted({s['group'] for s in samples})
+        self.info.setText(f'{len(samples)} samples in {len(groups)} group(s) ({", ".join(groups)}); '
+                          f'{n_ds} dataset(s), {n_pr} preset-dataset folder(s): '
                           f'{len(cells)} cells ({n_pos} green+, {len(cells) - n_pos} green−), {len(mito)} mito objects')
 
 
+    def edit_groups(self):
+        if not self.samples:
+            return
+        dlg = GroupEditor(self.samples, self)
+        if dlg.exec() == QDialog.Accepted:
+            try:
+                pipeline.write_groups(self.root, dlg.entries())
+            except OSError as e:
+                QMessageBox.warning(self, 'Groups', f'Cannot write groups.csv to {self.root}:\n{e}'); return
+            self.load()
+
+
 class MainWindow(QMainWindow):
+    OUT_HINT = 'Default: <common folder of the input folders>/dataset'
+
     def __init__(self):
         super().__init__()
         self.setWindowTitle(f'Mito Analyzer {__version__}')
@@ -599,18 +928,20 @@ class MainWindow(QMainWindow):
         self.add_btn = QPushButton('Add files…'); self.add_btn.clicked.connect(self.browse_files)
         self.addf_btn = QPushButton('Add folder…'); self.addf_btn.clicked.connect(self.browse_folder)
         self.del_btn = QPushButton('Remove'); self.del_btn.clicked.connect(self.remove_rows)
-        self.clear_btn = QPushButton('Clear'); self.clear_btn.clicked.connect(lambda: self.table.setRowCount(0))
+        self.clear_btn = QPushButton('Clear'); self.clear_btn.clicked.connect(self.clear_rows)
+        self.group_btn = QPushButton('Set group…'); self.group_btn.clicked.connect(self.set_group)
+        self.group_btn.setToolTip('Put the selected image sets in one group; groups are compared in the Analysis tab')
         row = QHBoxLayout()
-        for b in (self.add_btn, self.addf_btn, self.del_btn, self.clear_btn):
+        for b in (self.add_btn, self.addf_btn, self.group_btn, self.del_btn, self.clear_btn):
             row.addWidget(b)
         iv.addLayout(row)
         hint = QLabel('Drop TIFFs or folders on the table; files are grouped into red/green/blue sets by name '
-                      '(…Ch1_Red / …Ch2_Green / …Ch3_Blue). Dataset, preset and sample can be edited; '
-                      'double-click a channel to change its file.')
+                      '(…Ch1_Red / …Ch2_Green / …Ch3_Blue). Group, dataset, preset and sample can be edited; '
+                      'select rows and press Set group… to group image sets; double-click a channel to change its file.')
         hint.setWordWrap(True); hint.setStyleSheet('color: gray; font-size: 11px;')
         iv.addWidget(hint)
         form = QFormLayout()
-        self.outdir = QLineEdit(); self.outdir.setPlaceholderText('Defaults to a "results" folder next to the dataset folder')
+        self.outdir = QLineEdit(); self.outdir.setPlaceholderText(self.OUT_HINT)
         ob = QPushButton('Browse…'); ob.clicked.connect(self.browse_out)
         row = QHBoxLayout(); row.addWidget(self.outdir, 1); row.addWidget(ob)
         form.addRow('Output folder', row)
@@ -735,6 +1066,7 @@ class MainWindow(QMainWindow):
         new = [s for s in sets if s['red'] not in have]
         for s in new:
             self.table.add_set(s, self.preset_default)
+        self.update_out_hint()
         msg = f'Added {len(new)} image set(s)'
         if len(sets) > len(new):
             msg += f', {len(sets) - len(new)} already in the table'
@@ -759,6 +1091,33 @@ class MainWindow(QMainWindow):
     def remove_rows(self):
         for r in sorted({i.row() for i in self.table.selectedIndexes()}, reverse=True):
             self.table.removeRow(r)
+        self.update_out_hint()
+
+    def clear_rows(self):
+        self.table.setRowCount(0); self.update_out_hint()
+
+    def default_out(self):
+        jobs = [self.table.job(r) for r in range(self.table.rowCount())]
+        return pipeline.default_outdir([j['root'] for j in jobs]) or (
+            os.path.join(os.path.dirname(os.path.dirname(jobs[0]['red'])), 'results') if jobs else '')
+
+    def update_out_hint(self):
+        d = self.default_out()
+        self.outdir.setPlaceholderText(f'Default: {d}' if d else self.OUT_HINT)
+
+    def set_group(self):
+        rows = sorted({i.row() for i in self.table.selectedIndexes()})
+        if not rows:
+            QMessageBox.information(self, 'Set group', 'Select the image sets (rows) to put in one group first.')
+            return
+        cur = self.table.text(rows[0], JobTable.GROUP)
+        names = self.table.groups()
+        name, ok = QInputDialog.getItem(self, 'Set group', f'Group for {len(rows)} image set(s):', names,
+                                        names.index(cur) if cur in names else 0, True)
+        name = name.strip()
+        if ok and name:
+            for r in rows:
+                self.table.item(r, JobTable.GROUP).setText(name)
 
     def method_changed(self):
         """Rows still showing the old default preset follow the new mito method."""
@@ -798,8 +1157,7 @@ class MainWindow(QMainWindow):
         if missing:
             QMessageBox.warning(self, 'Missing input', 'These files do not exist:\n' + '\n'.join(missing))
             return
-        self.base_out = os.path.expanduser(self.outdir.text().strip()) or os.path.join(
-            os.path.dirname(os.path.dirname(jobs[0]['red'])), 'results')
+        self.base_out = os.path.expanduser(self.outdir.text().strip()) or self.default_out()
         for j in jobs:
             j['preset'] = j['preset'] or self.mito_method.currentData()
             j['outdir'] = pipeline.job_outdir(self.base_out, j['dataset'], j['preset'], j['name'])
@@ -807,6 +1165,11 @@ class MainWindow(QMainWindow):
         if dup:
             QMessageBox.warning(self, 'Duplicate names', 'Several rows would write to the same folder; give them '
                                 'different sample names:\n' + '\n'.join(dup))
+            return
+        try:
+            pipeline.write_groups(self.base_out, [dict(j, sample=j['name']) for j in jobs])
+        except OSError as e:
+            QMessageBox.warning(self, 'Output folder', f'Cannot write to {self.base_out}:\n{e}')
             return
         params = pipeline.Params(min_area_um2=self.min_area.value(), binuc_tau=self.binuc_tau.value(),
                                  exclude_binucleate=self.excl_binuc.isChecked(),
@@ -834,7 +1197,7 @@ class MainWindow(QMainWindow):
         self.thread.start()
 
     def set_running(self, on):
-        for b in (self.add_btn, self.addf_btn, self.del_btn, self.clear_btn):
+        for b in (self.add_btn, self.addf_btn, self.group_btn, self.del_btn, self.clear_btn):
             b.setEnabled(not on)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers if on else
                                    QAbstractItemView.DoubleClicked | QAbstractItemView.EditKeyPressed

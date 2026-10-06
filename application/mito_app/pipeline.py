@@ -64,8 +64,9 @@ def find_sets(paths):
     """Group TIFF files (or the TIFFs inside folders, searched recursively) into red/green/blue image sets
     by file name.
 
-    Returns (sets, leftover): sets is a list of {'red', 'green', 'blue', 'dataset', 'name'} dicts in name order,
-    where dataset is the name of the folder that was added (or the file's own folder for single files);
+    Returns (sets, leftover): sets is a list of {'red', 'green', 'blue', 'dataset', 'name', 'root'} dicts in name
+    order, where dataset is the name of the folder that was added (or the file's own folder for single files) and
+    root that folder's path;
     leftover the channel files (names with red/green/blue) that could not be placed in a complete set."""
     files = {}  # path -> (dataset, folder the dataset name comes from)
     for p in paths:
@@ -96,7 +97,7 @@ def find_sets(paths):
                 if sub != '.':
                     s['name'] = f"{sub.replace(os.sep, '_')}_{s['name']}"
     for s in sets.values():
-        del s['_root']
+        s['root'] = s.pop('_root')
     # Merged / labels / binary TIFFs etc. are not channel files and are not reported
     leftover = [f for f in files if f not in used and CHANNEL_RX.search(os.path.basename(f))]
     return [sets[k] for k in sorted(sets)], leftover
@@ -111,6 +112,57 @@ def job_outdir(base, dataset, preset, name):
     """<output>/<dataset>/<preset>-<dataset>/<sample>/"""
     d, p = safe_name(dataset), safe_name(preset)
     return os.path.join(base, d, f'{p}-{d}', safe_name(name))
+
+
+def default_outdir(roots):
+    """<common parent folder of the input folders>/dataset, or '' if they share no folder.
+    One input folder (or nested ones): the folder above it."""
+    roots = sorted({os.path.abspath(r) for r in roots if r})
+    if not roots:
+        return ''
+    try:
+        common = os.path.commonpath(roots)
+    except ValueError:  # different drives
+        return ''
+    if common in roots:
+        common = os.path.dirname(common)
+    return os.path.join(common, 'dataset') if common and common != os.path.dirname(common) else ''
+
+
+GROUPS_FILE = 'groups.csv'
+
+
+def _read_group_file(path):
+    with open(path, newline='') as f:
+        return [r for r in csv.DictReader(f) if r.get('folder')]
+
+
+def write_groups(base, entries):
+    """Record the group of each sample folder in <base>/groups.csv (merged with what is already there).
+    `entries`: dicts with outdir (the sample folder), dataset, sample and group."""
+    path = os.path.join(base, GROUPS_FILE)
+    rows = {r['folder']: r for r in _read_group_file(path)} if os.path.exists(path) else {}
+    for e in entries:
+        rel = os.path.relpath(e['outdir'], base).replace(os.sep, '/')
+        rows[rel] = dict(folder=rel, dataset=e.get('dataset', ''), sample=e.get('sample', e.get('name', '')),
+                         group=str(e.get('group', '')).strip())
+    os.makedirs(base, exist_ok=True)
+    write_csv(path, sorted(rows.values(), key=lambda r: r['folder']), ('folder', 'dataset', 'sample', 'group'))
+
+
+def read_groups(root):
+    """{absolute sample folder: group} from every groups.csv under `root`; a file nearer the root wins."""
+    files = []
+    for d, dirs, fs in os.walk(root):
+        dirs.sort()
+        if GROUPS_FILE in fs:
+            files.append(d)
+    out = {}
+    for d in sorted(files, key=lambda x: -x.count(os.sep)):
+        for r in _read_group_file(os.path.join(d, GROUPS_FILE)):
+            if r.get('group', '').strip():
+                out[os.path.normpath(os.path.join(d, r['folder']))] = r['group'].strip()
+    return out
 
 
 def write_group_tables(results):
@@ -149,9 +201,11 @@ def read_csv(path):
 
 def load_results(root):
     """Every sample under `root` (any depth): rows of <sample>_per_cell.csv and <sample>_per_mito.csv with
-    dataset / preset / sample columns taken from the <dataset>/<preset>-<dataset>/<sample>/ layout.
-    Returns (cell_rows, mito_rows, sample folders)."""
+    dataset / preset / sample columns taken from the <dataset>/<preset>-<dataset>/<sample>/ layout, and a group
+    column from groups.csv (default: the dataset).
+    Returns (cell_rows, mito_rows, samples): samples = one dict per sample (folder + those columns)."""
     cells, mito, samples = [], [], []
+    groups = read_groups(root)
     for d, dirs, files in os.walk(root):
         dirs.sort()
         for f in sorted(files):
@@ -161,12 +215,12 @@ def load_results(root):
             up = os.path.basename(os.path.dirname(d))
             dataset = os.path.basename(os.path.dirname(os.path.dirname(d)))
             preset = up[:-len(dataset) - 1] if dataset and up.endswith('-' + dataset) else up
-            meta = dict(dataset=dataset, preset=preset, sample=name)
+            meta = dict(group=groups.get(os.path.normpath(d), dataset), dataset=dataset, preset=preset, sample=name)
             cells += [dict(meta, **r) for r in read_csv(os.path.join(d, f))]
             mp = os.path.join(d, f'{name}_per_mito.csv')
             if os.path.exists(mp):
                 mito += [dict(meta, **r) for r in read_csv(mp)]
-            samples.append(d)
+            samples.append(dict(folder=d, **meta))
     return cells, mito, samples
 
 

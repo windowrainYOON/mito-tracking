@@ -1,11 +1,11 @@
 """Entry point. With no arguments it opens the GUI; with `--cli` it runs headless:
 
     python -m mito_app --cli RED.tif GREEN.tif BLUE.tif -o OUTDIR [--exclude-binucleate] [--include-edge-cells]
-    python -m mito_app --cli --batch FOLDER_OR_TIFF [...] -o OUTDIR [--dataset NAME] [--preset NAME]
+    python -m mito_app --cli --batch FOLDER_OR_TIFF [...] -o OUTDIR [--dataset NAME] [--preset NAME] [--group NAME]
 
 Batch mode groups the TIFFs (folders are searched recursively) into red/green/blue sets by file name and writes each set to
 OUTDIR/<dataset>/<preset>-<dataset>/<sample>/ (dataset defaults to the name of the folder given,
-preset to the mito method).
+preset to the mito method). The group of each set (default: its dataset) goes to OUTDIR/groups.csv.
 """
 import argparse, os, sys, warnings
 
@@ -19,6 +19,7 @@ def cli(argv):
     ap.add_argument('inputs', nargs='+', help='RED GREEN BLUE, or with --batch any TIFFs / folders')
     ap.add_argument('--batch', action='store_true')
     ap.add_argument('--dataset'); ap.add_argument('--preset')
+    ap.add_argument('--group', help='group of all sets in this batch (for the group comparison; default: the dataset)')
     ap.add_argument('-o', '--outdir', required=True)
     ap.add_argument('--name')
     ap.add_argument('--min-area-um2', type=float, default=250)
@@ -49,10 +50,14 @@ def cli(argv):
     for f in leftover:
         print(f'skipped (no complete red/green/blue set): {f}')
     results, failed = [], 0
-    for n, s in enumerate(sets, 1):
+    entries = [dict(outdir=pipeline.job_outdir(A.outdir, A.dataset or s['dataset'], A.preset or A.mito_method, s['name']),
+                    dataset=A.dataset or s['dataset'], sample=s['name'], group=A.group or A.dataset or s['dataset'])
+               for s in sets]
+    if entries:
+        pipeline.write_groups(A.outdir, entries)
+    for n, (s, e) in enumerate(zip(sets, entries), 1):
         name = s['name']
-        dataset = A.dataset or s['dataset']
-        out = pipeline.job_outdir(A.outdir, dataset, A.preset or A.mito_method, name)
+        out = e['outdir']
         print(f'[{n}/{len(sets)}] {name} -> {out}')
         try:
             results.append(pipeline.run(s['red'], s['green'], s['blue'], out, p, name))

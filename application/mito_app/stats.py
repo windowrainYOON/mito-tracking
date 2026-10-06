@@ -100,3 +100,93 @@ def correlation_table(cell_rows, mito_rows):
             for yk, yl in available(ys, rows):
                 out.append(dict(level=level, x=xk, y=yk, **pair_stats(numeric(rows, xk), numeric(rows, yk))))
     return out
+
+
+# ---- group comparison ----
+def corr_matrix(rows, xs, ys, method='r'):
+    """(len(ys), len(xs)) matrix of Pearson r ('r') or Spearman rho ('rho') and the n behind each value."""
+    vals = np.full((len(ys), len(xs)), np.nan); ns = np.zeros(vals.shape, int)
+    for j, (xk, _) in enumerate(xs):
+        x = numeric(rows, xk)
+        for i, (yk, _) in enumerate(ys):
+            y = numeric(rows, yk)
+            if method == 'r':
+                reg = regression(x, y); vals[i, j], ns[i, j] = reg['r'], reg['n']
+            else:
+                vals[i, j], _, ns[i, j] = spearman(x, y)
+    return vals, ns
+
+
+def corr_diff_p(r1, n1, r2, n2):
+    """Two-sided p that two independent correlations differ (Fisher z test); nan where not computable."""
+    r1, r2 = np.clip(np.asarray(r1, float), -0.999999, 0.999999), np.clip(np.asarray(r2, float), -0.999999, 0.999999)
+    n1, n2 = np.asarray(n1, float), np.asarray(n2, float)
+    with np.errstate(divide='ignore', invalid='ignore'):
+        se = np.sqrt(1 / (n1 - 3) + 1 / (n2 - 3))
+        z = (np.arctanh(r2) - np.arctanh(r1)) / se
+    p = 2 * stats.norm.sf(np.abs(z))
+    return np.where((n1 > 3) & (n2 > 3), p, np.nan)
+
+
+def describe(v):
+    v = np.asarray(v, float); v = v[np.isfinite(v)]
+    n = len(v)
+    if not n:
+        return dict(n=0, mean=math.nan, sd=math.nan, sem=math.nan, ci95=math.nan, median=math.nan, q1=math.nan,
+                    q3=math.nan)
+    sd = float(np.std(v, ddof=1)) if n > 1 else math.nan
+    sem = sd / math.sqrt(n) if n > 1 else math.nan
+    ci = float(stats.t.ppf(0.975, n - 1) * sem) if n > 1 else math.nan
+    q1, med, q3 = np.percentile(v, [25, 50, 75])
+    return dict(n=n, mean=float(v.mean()), sd=sd, sem=sem, ci95=ci, median=float(med), q1=float(q1), q3=float(q3))
+
+
+def group_test(arrays):
+    """Parametric and rank test across groups: Welch t + Mann-Whitney U for two groups,
+    one-way ANOVA + Kruskal-Wallis for more. Returns (p_param, p_rank, name_param, name_rank)."""
+    arrays = [np.asarray(a, float)[np.isfinite(a)] for a in arrays]
+    arrays = [a for a in arrays if len(a)]
+    two = len(arrays) == 2
+    names = ('Welch t', 'Mann-Whitney U') if two else ('ANOVA', 'Kruskal-Wallis')
+    if len(arrays) < 2 or any(len(a) < 2 for a in arrays):
+        return math.nan, math.nan, *names
+    allv = np.concatenate(arrays)
+    if np.ptp(allv) == 0:
+        return math.nan, math.nan, *names
+    if two:
+        p1 = stats.ttest_ind(*arrays, equal_var=False).pvalue
+        p2 = stats.mannwhitneyu(*arrays, alternative='two-sided').pvalue
+    else:
+        p1 = stats.f_oneway(*arrays).pvalue
+        p2 = stats.kruskal(*arrays).pvalue
+    return float(p1), float(p2), *names
+
+
+def sample_means(rows, keys, by=('group', 'dataset', 'preset', 'sample')):
+    """One row per image (sample): the mean of each metric over its cells / mito objects."""
+    out = {}
+    for r in rows:
+        out.setdefault(tuple(r.get(k, '') for k in by), []).append(r)
+    res = []
+    for kv, rs in out.items():
+        d = dict(zip(by, kv), n_rows=len(rs))
+        for k in keys:
+            v = numeric(rs, k); v = v[np.isfinite(v)]
+            d[k] = float(v.mean()) if len(v) else math.nan
+        res.append(d)
+    return res
+
+
+def group_summary(rows, metrics, groups, key='group'):
+    """Per metric: n / mean / SD / SEM / 95 % CI / median / IQR of every group and the across-group tests."""
+    out = []
+    for mk, ml in metrics:
+        arrays = [numeric([r for r in rows if str(r.get(key, '')) == g], mk) for g in groups]
+        p1, p2, n1, n2 = group_test(arrays)
+        d = {'metric': ml, f'p ({n1})': p1, f'p ({n2})': p2}
+        for g, a in zip(groups, arrays):
+            for s, v in describe(a).items():
+                d[f'{g}: {s}'] = v
+        d['column'] = mk
+        out.append(d)
+    return out

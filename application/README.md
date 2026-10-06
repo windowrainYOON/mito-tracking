@@ -39,12 +39,16 @@ A step-by-step explanation with figures from one example image is in [`docs/Mito
 
 The **Analysis (all samples)** tab loads every `<sample>_per_cell.csv` / `_per_mito.csv` under a results folder (filled in automatically after a batch) and pools them with `dataset`, `preset` and `sample` columns: filter by green+ / green−, dataset, preset or sample, colour by any of them, and export the pooled tables plus a regression table (`pooled_*`).
 
+**Groups.** Each image set has a *Group* (default: its dataset); select rows and press *Set group…* to put several sets in one group. Groups are saved in `<output>/groups.csv` and can be changed later with *Groups…* in the Analysis tab (CLI: `--group NAME`). The Analysis tab compares them:
+- *Groups: correlation*: the mito × green correlation heatmaps of group A and group B side by side, and a third heatmap of the difference (B − A) with `*` p < 0.05 / `**` p < 0.01 (Fisher z test for two independent correlations); the largest differences are listed below.
+- *Groups: mean / median*: per metric, the individual values with mean ± SD / SEM / 95 % CI or median ± IQR per group, and a table of n, mean, SD, SEM, 95 % CI, median, Q1, Q3 per group with Welch t + Mann-Whitney U (two groups) or one-way ANOVA + Kruskal-Wallis (more). The unit can be cells / mito objects or images (the mean of each image, so groups with many cells from few images are not over-weighted).
+
 Correlation views (per sample and pooled): heatmap of Pearson r (or Spearman ρ) for every mito × green pair; click a square for its scatter with the least-squares line, 95 % band, r, R², p and n, split into quadrants at the mean (or median) of X and Y with the share of points in each, so negative relations (quadrants II / IV) stand out. With log X / log Y the fit uses log10 values.
 
 Tabs: **Cells** (all per-cell metrics; column headers show `(+)` / `(−)`), **Mito objects** and **Green puncta** (sortable, filter by green+ / green− and by cell), **Correlation** (Spearman heatmap of all pairs within all / green+ / green− cells; click a square for the scatter plot, coloured by cell), **Green+ / − cells** (the green calls), and overlay images.
 
 ## Outputs
-Folder layout: `<output>/<dataset>/<preset>-<dataset>/<sample>/`. Each `<preset>-<dataset>` folder also gets the pooled tables of its samples: `<preset>-<dataset>_all_cells.csv`, `…_all_mito.csv`, their `_green_pos` / `_green_neg` versions, and `…_all_results.xlsx` (with a `sample` column).
+Folder layout: `<output>/<dataset>/<preset>-<dataset>/<sample>/`; with no output folder given, `<output>` is `dataset/` inside the common parent folder of the input folders. Each `<preset>-<dataset>` folder also gets the pooled tables of its samples: `<preset>-<dataset>_all_cells.csv`, `…_all_mito.csv`, their `_green_pos` / `_green_neg` versions, and `…_all_results.xlsx` (with a `sample` column).
 
 Per sample (in its own folder, prefixed with the sample name):
 - `_results.xlsx` – sheets `cells_green_pos`, `mito_green_pos`, `puncta_green_pos`, `corr_green_pos`, the same four for `green_neg`, then `all_*` (every analysed cell) and `settings`

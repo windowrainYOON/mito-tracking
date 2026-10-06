@@ -49,5 +49,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
    - 모든 지표 쌍의 회귀(r, R², p)와 Spearman ρ 를 구하고, 산점도를 사분면으로 나눠 보여 줍니다.
    - green+ 와 green− 는 각각 따로 계산해 출력합니다.
    - *Analysis* 탭에서 결과 폴더 전체를 모아 통합 분석할 수 있습니다.
+   - **그룹 비교**: 입력 표의 *Group* 열(기본값 = dataset)이나 *Set group…* 버튼으로 이미지셋을 그룹으로 묶습니다. *Analysis* 탭의 *Groups: correlation* 은 두 그룹의 상관 heat map과 그 차이(B − A, Fisher z 검정 * p < 0.05) heat map을, *Groups: mean / median* 은 지표마다 평균·중앙값과 에러바(SD / SEM / 95 % CI / IQR), 그룹 간 검정(두 그룹: Welch t·Mann-Whitney, 그 이상: ANOVA·Kruskal-Wallis) 표를 보여줍니다. 세포 단위나 이미지 단위(이미지별 평균)로 비교할 수 있습니다. 그룹은 결과 폴더의 `groups.csv` 에 저장되고 *Groups…* 버튼으로 나중에 바꿀 수 있습니다.
+   - 출력 폴더를 비워두면 입력 폴더들의 공통 상위 폴더 안 `dataset` 폴더에 저장합니다.
 
 설명 PDF 는 `cd application && .venv/bin/python tools/make_algorithm_pdf.py RED.tif GREEN.tif BLUE.tif -o docs/Mito_Analyzer_algorithm.pdf` 로 현재 코드 기준으로 다시 만들 수 있습니다.

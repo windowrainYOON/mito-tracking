@@ -1,2 +1,2 @@
 """Mito Analyzer: nucleus-seeded cell ROIs + per-cell MiNA mitochondrial network analysis."""
-__version__ = '0.8.2'
+__version__ = '0.9.0'
