@@ -637,15 +637,10 @@ class MainWindow(QMainWindow):
         self.sens = self._spin(0.2, 5, 1.0, 2, ' ×', 0.05,
                                'Multiplies the automatic green puncta threshold: >1 keeps fewer, brighter puncta')
         self.min_mito = self._spin(0, 10, 0.05, 3, ' µm²', 0.01, 'Mito pieces smaller than this are left out of the per-mito table')
-        self.green_split = QCheckBox('Split touching green+ cells by green intensity')
-        self.green_split.setChecked(True)
-        self.green_split.setToolTip('Green+ cells and their neighbours are redrawn by a watershed on green intensity '
-                                    '(borders along dark gaps). Dim nuclei and bright green territories without a '
-                                    'nucleus become their own cell when large enough and green-positive.')
-        self.green_refine = QCheckBox('Fine-tune cell ROIs with the green pattern')
-        self.green_refine.setChecked(True)
-        self.green_refine.setToolTip('A bright green patch outside the cells, or at the edge of a green-negative cell, '
-                                     'within 2 µm of a green-positive cell is added to that cell\'s ROI')
+        self.dim_nuclei = QCheckBox('Dim (out-of-focus) nuclei also get their own cell')
+        self.dim_nuclei.setChecked(True)
+        self.dim_nuclei.setToolTip('Faint, compact nuclei clear of the in-focus ones seed a cell too, so their '
+                                   'mitochondria are not given to a neighbour')
         self.green_pos = self._spin(0, 100, 2.0, 1, ' %', 0.5,
                                     'A cell is green-positive when bright green covers at least this share of its '
                                     'cytoplasm (cell minus nucleus)')
@@ -656,8 +651,7 @@ class MainWindow(QMainWindow):
         of.addRow('Pixel size (0 = auto)', self.px)
         of.addRow('Green puncta threshold', self.sens)
         of.addRow('Minimum mito object', self.min_mito)
-        of.addRow(self.green_split)
-        of.addRow(self.green_refine)
+        of.addRow(self.dim_nuclei)
         of.addRow('Green+ cell: bright green ≥', self.green_pos)
 
         self.run_btn = QPushButton('Run all'); self.run_btn.setDefault(True)
@@ -806,8 +800,7 @@ class MainWindow(QMainWindow):
                                  include_edge_cells=self.incl_edge.isChecked(), pixel_size_um=self.px.value(),
                                  puncta_sensitivity=self.sens.value(), min_mito_area_um2=self.min_mito.value(),
                                  mito_method=self.mito_method.currentData(),
-                                 green_refine=self.green_refine.isChecked(), green_pos_percent=self.green_pos.value(),
-                                 green_split=self.green_split.isChecked())
+                                 green_pos_percent=self.green_pos.value(), dim_nuclei=self.dim_nuclei.isChecked())
         for r in range(n):
             self.table.set_status(r, 'queued')
         self.logbox.clear()

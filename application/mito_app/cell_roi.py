@@ -144,6 +144,48 @@ def segment(g, sigma=10, fg_k=0.75, valley_pct=88, seed_dist=90,
                 labels=smooth_labels(lab))
 
 
+def find_dim_nuclei(nuc_img, nuclei, px, k=1.0, rel=0.4, min_frac=0.4, min_solidity=0.8):
+    """Out-of-focus nuclei: above `rel` x the in-focus Otsu level, compact, at least `min_frac` of the
+    minimum in-focus nucleus area and clear of the in-focus nuclei. Returned as labels numbered after
+    the in-focus ones (0 elsewhere). They give their cell a seed so its mitochondria are not handed to
+    a neighbour."""
+    s = filters.gaussian(nuc_img, 2 * k, preserve_range=True)
+    t = filters.threshold_otsu(s)
+    m = (s > rel * t) & ~ndi.binary_dilation(nuclei > 0, iterations=max(1, round(1.5 / px)))
+    m = morphology.binary_opening(m, morphology.disk(max(1, round(3 * k))))
+    out = np.zeros_like(nuclei)
+    nxt = int(nuclei.max())
+    for r in measure.regionprops(measure.label(m)):
+        if r.area >= min_frac * 3000 * k * k and r.solidity >= min_solidity:
+            nxt += 1
+            out[tuple(r.coords.T)] = nxt
+    return out
+
+
+def segment_morph(red, nuclei, landscape, px, k=1.0, fg_level=0.12, compactness=0.003, mito_weight=1.0):
+    """Cell ROIs from shape and intensity: one nucleus at the centre of each cell, its cytoplasm spread
+    around it, and neighbouring cells separated by thin lines where the mitochondria stop.
+
+      foreground : mitochondria density (red, sigma 3 um) above `fg_level` of its 99th percentile, + nuclei
+      cost       : low where mitochondria are dense (sigma 1.5 um), high on the dark mito-free lines
+                   (Sato black-ridge filter at 1.5-2.5 um), + the green-autofluorescence border map
+      watershed  : from every nucleus (in focus and dim), compact (`compactness` per reference pixel of
+                   distance from the nucleus), so each cell grows evenly around its nucleus
+    """
+    r = red.astype(float)
+    md = ndi.gaussian_filter(r, 1.5 / px)
+    md = np.clip(md / max(np.percentile(md, 99), 1e-9), 0, 1)
+    ridge = filters.sato(md, sigmas=[1.5 / px, 2.5 / px], black_ridges=True)
+    ridge = np.clip(ridge / max(np.percentile(ridge, 99.5), 1e-9), 0, 2)
+    md3 = ndi.gaussian_filter(r, 3 / px)
+    fg = (md3 > fg_level * max(np.percentile(md3, 99), 1e-9)) | (nuclei > 0)
+    fg = morphology.binary_closing(fg, morphology.disk(max(1, round(2 / px))))
+    fg = morphology.remove_small_holes(fg, max_size=int(200 / px / px))
+    cost = mito_weight * (1 - md) + mito_weight * ridge + landscape
+    lab = segmentation.watershed(cost, nuclei, mask=fg, compactness=compactness / k)
+    return dict(labels=smooth_labels(lab, nuclei, k), fg=fg, mito_density=md, ridge=ridge)
+
+
 def smooth_labels(lab, keep=None, k=1.0):
     """Open each ROI, fill holes, keep its largest piece; `keep` pixels (nuclei) are never lost."""
     out = np.zeros_like(lab)

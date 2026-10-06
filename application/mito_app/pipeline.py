@@ -26,9 +26,8 @@ class Params:
     puncta_sensitivity: float = 1.0   # multiplies the green puncta threshold (>1 = fewer, brighter puncta)
     min_mito_area_um2: float = 0.05   # smallest mito object in the per-mito table
     mito_method: str = 'split'        # 'split' = adaptive threshold + watershed objects, 'otsu' = MiNA classic
-    green_refine: bool = True         # extend cell ROIs over nearby green patches of expressing cells
     green_pos_percent: float = 2.0    # cell is green-positive if bright green covers >= this % of its cytoplasm
-    green_split: bool = True          # redraw touching green-positive cells along green intensity valleys
+    dim_nuclei: bool = True           # out-of-focus nuclei also seed (and own) a cell
 
 
 def sample_name(red_path):
@@ -201,22 +200,24 @@ def run(red_path, green_path, blue_path, outdir, params=None, name=None, log=pri
     log(f'     {red.shape[1]}x{red.shape[0]} px, pixel size {px:.4f} um, {nuc.max()} in-focus nuclei; '
         f'green auto-levels: background {norm["offset"]:.2f}, gain x{norm["gain"]:.2f}')
 
-    log('2/5  Segmenting cells (one nucleus = one cell)')
+    log('2/5  Segmenting cells (one nucleus per cell; mito-free lines and cell shape set the borders)')
+    n_focus = int(nuc.max())
+    if p.dim_nuclei:
+        dim = cell_roi.find_dim_nuclei(nuc_img, nuc, px, k)
+        nuc = np.where(dim > 0, dim, nuc)
+        if nuc.max() > n_focus:
+            log(f'     + {int(nuc.max()) - n_focus} dim (out-of-focus) nuclei used as cell seeds')
     res = cell_roi.segment(gn, min_area_px=int(p.min_area_um2 / px ** 2), nuclei=nuc, k=k)
     res['nuc_img'] = nuc_img
-    lab0 = res['labels']
-    log('     Green: ' + ('splitting expressing cells by intensity, ' if p.green_split else '')
-        + ('refining ROIs by the expression pattern, ' if p.green_refine else '') + 'calling green+/- cells')
-    res['labels'], gstatus, ginfo = green_cells.process(
-        gn, lab0, nuc, nuc_img, res['landscape'], px, k, min_fraction=p.green_pos_percent / 100,
-        min_area_px=int(p.min_area_um2 / px ** 2), do_split=p.green_split, do_refine=p.green_refine,
-        log=lambda s: log('     ' + s))
+    morph = cell_roi.segment_morph(red, nuc, res['landscape'], px, k)
+    res['labels'], res['fg'] = morph['labels'], morph['fg']
+    gstatus, ginfo = green_cells.classify(gn, res['labels'], nuc, k, p.green_pos_percent / 100)
     rois = cell_roi.save_outputs(a, gn, res, px, outdir, name, binuc_tau=p.binuc_tau,
                                  exclude_binuc=p.exclude_binucleate)
     n_ok = sum(r['status'] == 'ok' for r in rois)
     for r in rois:
         r['green_status'] = gstatus[int(r['roi'][4:])]
-        r['seed'] = ginfo['new_cells'].get(int(r['roi'][4:]), 'nucleus')
+        r['seed'] = 'dim nucleus' if int(r['roi'][4:]) > n_focus else 'nucleus'
     log(f'     {len(rois)} cell ROIs, {n_ok} pass QC (not touching the border'
         + (', not binucleate)' if p.exclude_binucleate else ')'))
 
@@ -292,15 +293,15 @@ def run(red_path, green_path, blue_path, outdir, params=None, name=None, log=pri
     group_sheets = [(f'{s}_{g_tag}', groups[g_key][k]) for g_key, g_tag in GREEN_GROUPS
                     for s, k in (('cells', 'rows'), ('mito', 'mito_rows'), ('puncta', 'puncta_rows'), ('corr', 'correlations'))]
     write_xlsx(files['xlsx'], group_sheets + [(f'all_{n_}', t) for n_, t in tables]
-               + [('roi_refinement', ginfo['moved']), ('settings', [settings])])
-    render_green_cells(gn, lab0, res['labels'], ginfo, gstatus, {r['roi'] for r in rois if r['status'] == 'ok'
+               + [('settings', [settings])])
+    render_green_cells(gn, res['labels'], ginfo, gstatus, {r['roi'] for r in rois if r['status'] == 'ok'
                        or p.include_edge_cells}, files['green_cells'])
     render_green(red, green, lab, mito_rows, b, mlab, plab, rows, files['green_overlay'])
     write_label_rois(mlab, 'm', files['mito_roiset'])
     write_label_rois(plab, 'p', files['puncta_roiset'])
     log(f'     Done. Results in {outdir}')
     return dict(name=name, outdir=outdir, rows=cell_rows, mito_rows=mito_rows, puncta_rows=puncta_rows,
-                correlations=corr, rois=rois, groups=groups, roi_moves=ginfo['moved'], **files)
+                correlations=corr, rois=rois, groups=groups, **files)
 
 
 GREEN_GROUPS = (('positive', 'green_pos'), ('negative', 'green_neg'))
@@ -396,8 +397,8 @@ def render_green(red, green, lab, mito_rows, mito, mlab, plab, rows, path):
     fig.tight_layout(); fig.savefig(path)
 
 
-def render_green_cells(gn, lab0, lab, info, status, analysed, path):
-    """Bright green mask, cell ROIs before (dashed) and after green refinement, green+ / green- labels."""
+def render_green_cells(gn, lab, info, status, analysed, path):
+    """Bright green mask, cell ROIs and their green+ / green- calls."""
     from matplotlib.figure import Figure
     from scipy import ndimage as ndi
     v = np.clip(gn / max(np.percentile(gn, 99.5), 1e-9), 0, 1)
@@ -405,10 +406,6 @@ def render_green_cells(gn, lab0, lab, info, status, analysed, path):
     rgb[info['mask']] = (1.0, 0.95, 0.2)
     fig = Figure(figsize=(12, 12), dpi=120); ax = fig.subplots()
     ax.imshow(rgb); ax.set_axis_off()
-    if (lab0 != lab).any():
-        ax.contour(lab0 > 0, [0.5], colors='#7fa7ff', linewidths=0.8, linestyles='--')
-        for l in np.unique(lab0[lab0 != lab]):
-            ax.contour(lab0 == l, [0.5], colors='#7fa7ff', linewidths=1.0, linestyles='--')
     for l in range(1, lab.max() + 1):
         m = lab == l
         if not m.any():
@@ -417,14 +414,10 @@ def render_green_cells(gn, lab0, lab, info, status, analysed, path):
         ax.contour(m, [0.5], colors='#ff5050' if pos else '#c8c8c8', linewidths=2.2 if pos else 1.0)
         cy, cx = ndi.center_of_mass(m)
         name = f'cell{l:02d}'
-        seed = info.get('new_cells', {}).get(l)
-        ax.text(cx, cy, f"{l}{'+' if pos else '−'}" + (f'\n(new: {seed})' if seed else '')
+        ax.text(cx, cy, f"{l}{'+' if pos else '−'}"
                 + ('' if name in analysed else '\n(not analysed)'),
                 color='white', fontsize=(13 if pos else 10) if name in analysed else 8, weight='bold', ha='center', va='center',
                 bbox=dict(facecolor='#b00000' if pos else 'black', alpha=0.6, pad=1.5, edgecolor='none'))
-    n_mv = len(info['moved'])
-    ax.set_title(f'Green+ cells (red outline) / green− (grey). Yellow: bright green >= {info["threshold"]:.1f}. '
-                 + (f'{len(info.get("new_cells", {}))} cell(s) split off by green intensity, '
-                    f'{n_mv} green patch(es) moved into the expressing cell; blue dashed = ROI before the green steps.'
-                    if (lab0 != lab).any() else 'No ROI changed by the green steps.'), fontsize=9)
+    ax.set_title(f'Green+ cells (red outline) / green− (grey). Yellow: bright green >= {info["threshold"]:.1f} '
+                 f'auto-levelled units. Cell ROIs are not changed by green.', fontsize=9)
     fig.tight_layout(); fig.savefig(path)
