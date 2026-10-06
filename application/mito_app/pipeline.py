@@ -101,8 +101,8 @@ def write_group_tables(results):
         for g_key, g_tag in GREEN_GROUPS:
             gc = [r for r in cells if r.get('green_status') == g_key]
             gm = [r for r in mito if r.get('green_status') == g_key]
-            write_csv(os.path.join(d, f'{tag}_all_cells_{g_tag}.csv'), gc)
-            write_csv(os.path.join(d, f'{tag}_all_mito_{g_tag}.csv'), gm)
+            write_csv(os.path.join(d, f'{tag}_all_cells_{g_tag}.csv'), gc, cells[0] if cells else None)
+            write_csv(os.path.join(d, f'{tag}_all_mito_{g_tag}.csv'), gm, mito[0] if mito else None)
             sheets += [(f'cells_{g_tag}', gc), (f'mito_{g_tag}', gm)]
         write_xlsx(os.path.join(d, f'{tag}_all_results.xlsx'), sheets + [('all_cells', cells), ('all_mito', mito)])
 
@@ -221,8 +221,9 @@ def run(red_path, green_path, blue_path, outdir, params=None, name=None, log=pri
         gp = [r for r in puncta_rows if r['green_status'] == g_key]
         gr = stats.correlation_table(gc, gm)
         groups[g_key] = dict(rows=gc, mito_rows=gm, puncta_rows=gp, correlations=gr)
-        for label, t in (('per_cell', gc), ('per_mito', gm), ('green_puncta', gp), ('correlations', gr)):
-            write_csv(os.path.join(outdir, f'{name}_{label}_{g_tag}.csv'), t)
+        for label, t, full in (('per_cell', gc, cell_rows), ('per_mito', gm, mito_rows),
+                               ('green_puncta', gp, puncta_rows), ('correlations', gr, corr)):
+            write_csv(os.path.join(outdir, f'{name}_{label}_{g_tag}.csv'), t, full[0] if full else None)
     group_sheets = [(f'{s}_{g_tag}', groups[g_key][k]) for g_key, g_tag in GREEN_GROUPS
                     for s, k in (('cells', 'rows'), ('mito', 'mito_rows'), ('puncta', 'puncta_rows'), ('corr', 'correlations'))]
     write_xlsx(files['xlsx'], group_sheets + [(f'all_{n_}', t) for n_, t in tables]
@@ -259,11 +260,12 @@ def _fmt(v):
     return f'{v:.4f}' if isinstance(v, float) else v
 
 
-def write_csv(path, rows):
+def write_csv(path, rows, cols=None):
+    """`cols` = header to write when `rows` is empty (e.g. an image with no green-positive cell)."""
     with open(path, 'w', newline='') as f:
-        if not rows:
+        if not rows and not cols:
             return
-        w = csv.DictWriter(f, fieldnames=list(rows[0]))
+        w = csv.DictWriter(f, fieldnames=list(rows[0]) if rows else list(cols))
         w.writeheader()
         for d in rows:
             w.writerow({k: _fmt(v) for k, v in d.items()})
