@@ -5,14 +5,16 @@ Per-cell mitochondrial network analysis for three-channel images of the same fie
 | Channel | Content | Used for |
 |---|---|---|
 | Red | mitochondria | MiNA analysis inside each cell |
-| Green | protein of interest | mean intensity per cell; its weak autofluorescence outlines cells |
-| Blue | nuclei | one in-focus nucleus = one cell (watershed seeds) |
+| Green | protein of interest | green on mito, green puncta, green+ / green− call; its weak autofluorescence helps place cell borders |
+| Blue | nuclei | one nucleus (in focus or dim) = one cell (watershed seeds) |
 
 Inputs are ImageJ RGB TIFF exports with the signal in the matching channel (e.g. `…_Ch1_Red.tif`, `…_Ch2_Green.tif`, `…_Ch3_Blue.tif`); single-channel 8-bit TIFFs also work. Files are grouped into red/green/blue sets by that naming pattern.
 
 GUI toolkit: **PySide6 (Qt)**, cross-platform (macOS, Windows, Linux).
 
 ## Pipeline
+A step-by-step explanation with figures from one example image is in [`docs/Mito_Analyzer_algorithm.pdf`](docs/Mito_Analyzer_algorithm.pdf) (regenerate with `tools/make_algorithm_pdf.py RED GREEN BLUE -o docs/Mito_Analyzer_algorithm.pdf`).
+
 0. **Auto-levels**: the green image is rescaled per image set (dark gap level -> 0, 75th percentile of the smoothed image -> reference level), and all size constants scale with the pixel size, so other image sets with different gain, exposure, bit depth or magnification segment the same way.
 1. **Cell ROIs** (`mito_app/cell_roi.py`, shape + intensity): each cell has one nucleus at its centre with the cytoplasm spread around it, and neighbouring cells are separated by thin lines where the mitochondria stop.
    - seeds: nuclei by Otsu on the blue channel, plus dim (out-of-focus) nuclei (> 0.4 × the nuclear Otsu level, compact, clear of the in-focus ones; option *Dim nuclei also get their own cell*, default on) so their mitochondria are not given to a neighbour. ROIs grown from them have `seed` = `dim nucleus`.
