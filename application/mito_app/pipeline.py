@@ -12,7 +12,7 @@ from dataclasses import asdict, dataclass
 
 import numpy as np
 
-from . import cell_roi, mina, stats
+from . import cell_roi, mina, mito_objects, stats
 from . import green as green_q
 
 
@@ -25,6 +25,7 @@ class Params:
     pixel_size_um: float = 0.0        # 0 = read from the TIFF (falls back to the reference size)
     puncta_sensitivity: float = 1.0   # multiplies the green puncta threshold (>1 = fewer, brighter puncta)
     min_mito_area_um2: float = 0.05   # smallest mito object in the per-mito table
+    mito_method: str = 'split'        # 'split' = adaptive threshold + watershed objects, 'otsu' = MiNA classic
 
 
 def sample_name(red_path):
@@ -90,10 +91,22 @@ def run(red_path, green_path, blue_path, outdir, params=None, name=None, log=pri
     log(f'     {len(rois)} cell ROIs, {n_ok} pass QC (not touching the border'
         + (', not binucleate)' if p.exclude_binucleate else ')'))
 
-    log('3/5  MiNA on the red channel inside each cell')
     lab = res['labels']
+    mask_fn = None
+    if p.mito_method == 'split':
+        log('3/5  Mito objects (adaptive threshold + watershed split), then MiNA inside each cell')
+        p0 = dict(mito_objects.P, sigma=mito_objects.P['sigma'] * k)
+        sm = mito_objects.preprocess(red, px, p0)
+        used = [int(r['roi'][4:]) for r in rois if r['status'] == 'ok' or p.include_edge_cells]
+        q = mito_objects.scaled_params(sm, np.isin(lab, used), k, p0)
+
+        def mask_fn(cell):
+            fg, _, sep = mito_objects.segment_cell(sm, cell, px, q)
+            return sep > 0, mito_objects.fragmentation_metrics(fg, sep, cell, px)
+    else:
+        log('3/5  MiNA (Otsu per cell) on the red channel inside each cell')
     rows, b, sk, end, junc = mina.analyze_cells(red, lab, rois, px, green, p.include_edge_cells,
-                                                log=lambda s: log('     ' + s))
+                                                log=lambda s: log('     ' + s), mask_fn=mask_fn)
 
     log('4/5  Green on mitochondria (per cell, per mito object, green puncta)')
     mito_rows, puncta_rows, mlab, plab, thr = green_q.quantify(

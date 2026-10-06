@@ -138,8 +138,10 @@ def pstats(v):
     return float(v.mean()), float(np.median(v)), float(v.std(ddof=0))
 
 
-def analyze_cells(red, lab, rois, px, green=None, all_cells=False, log=print):
-    """MiNA per cell. `rois` are cell_roi rows (roi, status, ...). Returns (rows, binary, skeleton, ends, junctions)."""
+def analyze_cells(red, lab, rois, px, green=None, all_cells=False, log=print, mask_fn=None):
+    """MiNA per cell. `rois` are cell_roi rows (roi, status, ...). Returns (rows, binary, skeleton, ends, junctions).
+    By default the mito mask is MiNA's Otsu threshold inside the cell; `mask_fn(cell_mask) -> (mask, extra_cols)`
+    replaces it (e.g. separated mito objects)."""
     full_bin = np.zeros(red.shape, bool); full_sk = np.zeros(red.shape, bool)
     full_end = np.zeros(red.shape, bool); full_junc = np.zeros(red.shape, bool)
     rows = []
@@ -152,8 +154,16 @@ def analyze_cells(red, lab, rois, px, green=None, all_cells=False, log=print):
         if vals.size == 0 or vals.min() == vals.max():
             log(f"{r['roi']}: skipped (no intensity variation in red channel)")
             continue
-        t = filters.threshold_otsu(vals)
-        b = m & (red > t)
+        extra = {}
+        if mask_fn is None:
+            t = filters.threshold_otsu(vals)
+            b = m & (red > t)
+        else:
+            t = float('nan')
+            b, extra = mask_fn(m)
+        if not b.any():
+            log(f"{r['roi']}: skipped (no mitochondria found)")
+            continue
         sk = morphology.skeletonize(b, method='lee').astype(bool)
         edges, ng, br, summed, donuts, end, junc = analyze_skeleton(sk, px)
         full_bin |= b; full_sk |= sk; full_end |= end; full_junc |= junc
@@ -168,7 +178,7 @@ def analyze_cells(red, lab, rois, px, green=None, all_cells=False, log=print):
                    summed_branch_lengths_mean_um=sl[0], summed_branch_lengths_median_um=sl[1],
                    summed_branch_lengths_stdev_um=sl[2],
                    network_branches_mean=nb[0], network_branches_median=nb[1], network_branches_stdev=nb[2],
-                   donuts=donuts)
+                   donuts=donuts, **extra)
         if green is not None:
             row['green_poi_mean_cell'] = float(green[m].mean())
         rows.append(row)
@@ -246,7 +256,8 @@ def render(red, lab, rois, rows, b, sk, end, junc, outdir, prefix):
         top, bot = axes[2 * (j // nc), j % nc], axes[2 * (j // nc) + 1, j % nc]
         top.imshow(np.clip(red[sl] / hi, 0, 1), cmap='gray')
         top.contour(lab[sl] == int(row['cell'][4:]), [0.5], colors='cyan', linewidths=1)
-        top.set_title(f"{row['cell']} red (Otsu t={row['otsu_threshold']:.0f})", fontsize=10)
+        t = row['otsu_threshold']
+        top.set_title(f"{row['cell']} red" + (f" (Otsu t={t:.0f})" if t == t else ''), fontsize=10)
         bot.imshow(rgb[sl]); bot.set_title(
             f"networks {row['n_networks']}, branches {row['n_branches']}, donuts {row['donuts']}", fontsize=10)
     fig.tight_layout(); fig.savefig(os.path.join(outdir, f'{prefix}_mina_cells.png'))

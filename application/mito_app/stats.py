@@ -11,7 +11,10 @@ CELL_X = [('footprint_fraction', 'Mito footprint fraction'), ('mitochondrial_foo
           ('summed_branch_lengths_mean_um', 'Network length mean (µm)'),
           ('network_branches_mean', 'Branches per network'), ('donuts', 'Donuts'),
           ('n_mito_objects', 'Mito objects'), ('mito_length_mean_um', 'Mito object length mean (µm)'),
-          ('mito_aspect_ratio_mean', 'Mito aspect ratio mean')]
+          ('mito_aspect_ratio_mean', 'Mito aspect ratio mean'),
+          ('objects_per_100um2_footprint', 'Objects per 100 µm² footprint'),
+          ('area_weighted_mean_object_um2', 'Area-weighted object size (µm²)'),
+          ('form_factor_mean', 'Form factor mean'), ('frac_footprint_small_round', 'Footprint in small round objects')]
 CELL_Y = [('green_poi_mean_cell', 'Green mean, whole cell'), ('green_mean_on_mito', 'Green mean on mito'),
           ('green_mean_off_mito', 'Green mean off mito'), ('green_enrichment_on_mito', 'Green enrichment on/off mito'),
           ('green_fraction_on_mito', 'Fraction of green on mito'), ('green_integrated_on_mito', 'Green integrated on mito'),
@@ -22,11 +25,17 @@ CELL_Y = [('green_poi_mean_cell', 'Green mean, whole cell'), ('green_mean_on_mit
           ('fraction_mito_with_puncta', 'Fraction of mito objects with puncta')]
 MITO_X = [('length_um', 'Length (µm)'), ('aspect_ratio', 'Aspect ratio'), ('area_um2', 'Area (µm²)'),
           ('n_branches', 'Branches'), ('n_junctions', 'Junctions'), ('n_endpoints', 'End points'),
-          ('solidity', 'Solidity'), ('major_axis_um', 'Major axis (µm)'), ('red_mean', 'Red mean')]
+          ('solidity', 'Solidity'), ('form_factor', 'Form factor'), ('major_axis_um', 'Major axis (µm)'), ('red_mean', 'Red mean')]
 MITO_Y = [('green_mean', 'Green mean'), ('green_integrated', 'Green integrated'), ('green_max', 'Green max'),
           ('n_green_puncta', 'Green puncta'), ('puncta_coverage', 'Puncta coverage'),
           ('puncta_overlap_area_um2', 'Puncta overlap area (µm²)'),
           ('puncta_green_integrated', 'Puncta green integrated'), ('puncta_mean_area_um2', 'Puncta mean size (µm²)')]
+
+
+def available(metrics, rows):
+    """Metrics that are present in the data (fragmentation metrics exist only for split objects)."""
+    keys = set(rows[0]) if rows else set()
+    return [m for m in metrics if m[0] in keys]
 
 
 def numeric(rows, key):
@@ -54,8 +63,8 @@ def correlation_table(cell_rows, mito_rows):
     Mito-level rows are pooled over all analysed cells; objects within a cell are not independent."""
     out = []
     for level, rows, xs, ys in (('cell', cell_rows, CELL_X, CELL_Y), ('mito', mito_rows, MITO_X, MITO_Y)):
-        for xk, xl in xs:
-            for yk, yl in ys:
+        for xk, xl in available(xs, rows):
+            for yk, yl in available(ys, rows):
                 rho, p, n = spearman(numeric(rows, xk), numeric(rows, yk))
                 out.append(dict(level=level, x=xk, y=yk, spearman_rho=rho, p_value=p, n=n))
     return out

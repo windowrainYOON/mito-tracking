@@ -15,9 +15,10 @@ GUI toolkit: **PySide6 (Qt)**, cross-platform (macOS, Windows, Linux).
 ## Pipeline
 0. **Auto-levels**: the green image is rescaled per image set (dark gap level -> 0, 75th percentile of the smoothed image -> reference level), and all size constants scale with the pixel size, so other image sets with different gain, exposure, bit depth or magnification segment the same way.
 1. **Cell ROIs** (`mito_app/cell_roi.py`): nuclei by Otsu on the blue channel; watershed from each nucleus over the green-channel autofluorescence and dark cell-cell "valleys". Cells touching the image border are excluded (`edge`). Neighbours with no dark border between them are listed in `weak_border_with`; they stay split one nucleus per cell unless *Exclude cells that share a weak border* is ticked.
-2. **MiNA per cell** (`mito_app/mina.py`): Python reproduction of Fiji MiNA with its defaults (no preprocessing, Otsu, skeletonize, AnalyzeSkeleton without pruning, population SD). Unlike MiNA, the threshold and skeleton use only pixels inside the cell mask, so neighbouring cells do not leak in.
+2. **Mito segmentation** (option, default *Split objects*, `mito_app/mito_objects.py`): adaptive (local mean) threshold with a per-cell Otsu floor, rolling-ball background, small holes filled; intensity watershed from h-maxima, re-merged unless the contact is both dark (saddle < 0.75 × dimmer peak) and narrow (contact length < thinner width); 1-px gaps between objects. Adds fragmentation metrics per cell (objects per 100 µm² footprint, area-weighted object size, form factor, small round fraction). *MiNA classic* uses one Otsu threshold per cell instead.
+3. **MiNA per cell** (`mito_app/mina.py`): Python reproduction of Fiji MiNA with its defaults (no preprocessing, Otsu, skeletonize, AnalyzeSkeleton without pruning, population SD). Unlike MiNA, the threshold and skeleton use only pixels inside the cell mask, so neighbouring cells do not leak in.
 
-3. **Green on mito** (`mito_app/green.py`):
+4. **Green on mito** (`mito_app/green.py`):
    - *mito objects* = connected pieces of the MiNA mito mask inside a cell (pieces under 0.05 µm² are left out); each gets skeleton length, branches, junctions, aspect ratio, solidity.
    - *green puncta* = white top-hat of green, one threshold per image (max of Otsu and median + 6 MAD inside analysed cells, × the sensitivity option).
    - per cell: green mean on / off mito, enrichment, fraction of green on mito, Pearson, Manders, puncta counts and density.

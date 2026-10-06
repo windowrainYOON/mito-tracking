@@ -181,7 +181,9 @@ class CorrelationTab(QWidget):
 
     def metrics(self):
         lv = self.level.currentData()
-        return (stats.CELL_X, stats.CELL_Y) if lv == 'cell' else (stats.MITO_X, stats.MITO_Y)
+        xs, ys = (stats.CELL_X, stats.CELL_Y) if lv == 'cell' else (stats.MITO_X, stats.MITO_Y)
+        rows = self.data[lv]
+        return stats.available(xs, rows), stats.available(ys, rows)
 
     def rows(self):
         rows = self.data[self.level.currentData()]
@@ -299,6 +301,12 @@ class MainWindow(QMainWindow):
         # options
         opt = QGroupBox('Options')
         of = QFormLayout(opt)
+        self.mito_method = QComboBox()
+        self.mito_method.addItem('Split objects: adaptive threshold + watershed', 'split')
+        self.mito_method.addItem('MiNA classic: Otsu per cell', 'otsu')
+        self.mito_method.setToolTip('Split objects separates touching mitochondria only where the contact is both dark '
+                                    '(< 0.75 of the dimmer peak) and narrow (shorter than the thinner width), '
+                                    'with a 1-px gap, before MiNA. MiNA classic uses one Otsu threshold per cell.')
         self.excl_binuc = QCheckBox('Exclude cells that share a weak border (look binucleate)')
         self.incl_edge = QCheckBox('Also analyse cells touching the image border')
         self.min_area = self._spin(0, 1e5, 250, 1, ' µm²')
@@ -308,6 +316,7 @@ class MainWindow(QMainWindow):
         self.sens = self._spin(0.2, 5, 1.0, 2, ' ×', 0.05,
                                'Multiplies the automatic green puncta threshold: >1 keeps fewer, brighter puncta')
         self.min_mito = self._spin(0, 10, 0.05, 3, ' µm²', 0.01, 'Mito pieces smaller than this are left out of the per-mito table')
+        of.addRow('Mito segmentation', self.mito_method)
         of.addRow(self.excl_binuc); of.addRow(self.incl_edge)
         of.addRow('Minimum cell area', self.min_area)
         of.addRow('Weak-border threshold', self.binuc_tau)
@@ -388,7 +397,8 @@ class MainWindow(QMainWindow):
         params = pipeline.Params(min_area_um2=self.min_area.value(), binuc_tau=self.binuc_tau.value(),
                                  exclude_binucleate=self.excl_binuc.isChecked(),
                                  include_edge_cells=self.incl_edge.isChecked(), pixel_size_um=self.px.value(),
-                                 puncta_sensitivity=self.sens.value(), min_mito_area_um2=self.min_mito.value())
+                                 puncta_sensitivity=self.sens.value(), min_mito_area_um2=self.min_mito.value(),
+                                 mito_method=self.mito_method.currentData())
         self.logbox.clear()
         self.run_btn.setEnabled(False); self.open_btn.setEnabled(False)
         self.statusBar().showMessage('Running…')

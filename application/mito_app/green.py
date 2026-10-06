@@ -103,6 +103,7 @@ def quantify(green, red, lab, mito, rows, px, bg=0.0, k=1.0, sensitivity=1.0, mi
             n_endpoints=int(end.sum()), donut=bool(donuts),
             major_axis_um=major * px, minor_axis_um=minor * px,
             aspect_ratio=major / minor, solidity=mr.solidity,
+            form_factor=(mr.perimeter * px) ** 2 / (4 * np.pi * mr.area * a_px),
             red_mean=float(r[sl][obj].mean()),
             green_mean=float(vals.mean()), green_integrated=float(vals.sum() * a_px),
             green_max=float(vals.max()),
