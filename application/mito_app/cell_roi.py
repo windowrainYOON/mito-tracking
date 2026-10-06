@@ -187,7 +187,7 @@ def segment_morph(red, nuclei, landscape, px, k=1.0, fg_level=0.12, compactness=
 
 
 def trim_edge_cells(lab, nuclei, cost, md, px, margin=3, nuc_gap_um=3.0, halo_um=2.0, min_keep=0.55,
-                    max_line=0.8, sliver=0.1, min_solidity=0.75, min_cyto=0.5, max_contact_um=3.0):
+                    max_line=0.8, sliver=0.1, min_solidity=0.70, min_cyto=0.5, max_contact_um=3.0):
     """Rescue cells whose nucleus is well inside the frame but whose ROI reaches the frame with a tip.
 
     Inside each such ROI a two-seed watershed on the border cost (high on mito-free lines) splits the cell
