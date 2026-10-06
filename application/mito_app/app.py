@@ -18,8 +18,12 @@ def cli(argv):
     ap.add_argument('--binuc-tau', type=float, default=0.0)
     ap.add_argument('--exclude-binucleate', action='store_true')
     ap.add_argument('--include-edge-cells', action='store_true')
+    ap.add_argument('--pixel-size-um', type=float, default=0.0, help='0 = read from the TIFF')
+    ap.add_argument('--puncta-sensitivity', type=float, default=1.0)
+    ap.add_argument('--min-mito-area-um2', type=float, default=0.05)
     A = ap.parse_args(argv)
-    p = pipeline.Params(A.min_area_um2, A.binuc_tau, A.exclude_binucleate, A.include_edge_cells)
+    p = pipeline.Params(A.min_area_um2, A.binuc_tau, A.exclude_binucleate, A.include_edge_cells,
+                        A.pixel_size_um, A.puncta_sensitivity, A.min_mito_area_um2)
     pipeline.run(A.red, A.green, A.blue, A.outdir, p, A.name)
     return 0
 

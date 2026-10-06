@@ -25,6 +25,29 @@ from scipy import ndimage as ndi
 from skimage import exposure, feature, filters, io, measure, morphology, segmentation
 
 
+REF_PX_UM = 0.0990       # pixel size of the reference data set the size parameters were tuned on
+REF_GREEN_UNIT = 4.79    # 75th pct of the background-subtracted, sigma=4 smoothed green image in that set
+REF_GREEN_OFFSET = 0.077  # 1st pct of the same smoothed image (dark gaps between cells)
+
+
+def normalize_green(g, px_scale=1.0):
+    """Rescale green so its cytoplasmic level matches the reference set.
+
+    Cell outlines come from dim autofluorescence/POI signal, and the segmentation constants
+    (clip level, log offset) are in reference intensity units. Using the dark-gap level as the
+    offset and the 75th percentile of the smoothed image as the unit makes the result independent
+    of gain, exposure, bit depth and display stretch.
+    """
+    sm = ndi.gaussian_filter(g, 4 * px_scale)
+    off = np.percentile(sm, 1)
+    unit = np.percentile(sm, 75) - off
+    if unit <= 0:
+        raise ValueError('Green channel has no usable signal for cell segmentation')
+    gain = REF_GREEN_UNIT / unit
+    gn = np.clip((g - off) * gain + REF_GREEN_OFFSET, 0, None)
+    return gn, dict(offset=float(off), gain=float(gain))
+
+
 def load_green(path):
     a = tifffile.imread(path)
     if a.ndim == 3 and a.shape[-1] == 3:
@@ -39,11 +62,12 @@ def load_green(path):
     return a, g, px_um
 
 
-def segment_nuclei(b, min_area_px=3000):
-    s = filters.gaussian(b, 2, preserve_range=True)
+def segment_nuclei(b, min_area_px=3000, k=1.0):
+    """Otsu nuclei; `k` = pixel-size scale factor (REF_PX_UM / pixel size)."""
+    s = filters.gaussian(b, 2 * k, preserve_range=True)
     m = s > filters.threshold_otsu(s)
-    m = ndi.binary_fill_holes(morphology.binary_opening(m, morphology.disk(3)))
-    m = morphology.remove_small_objects(m, max_size=min_area_px)
+    m = ndi.binary_fill_holes(morphology.binary_opening(m, morphology.disk(max(1, round(3 * k)))))
+    m = morphology.remove_small_objects(m, max_size=int(min_area_px * k * k))
     return measure.label(m)
 
 
@@ -83,16 +107,19 @@ def merge_regions(lab, img, contrast_tau, min_area, min_border=30):
 
 
 def segment(g, sigma=10, fg_k=0.75, valley_pct=88, seed_dist=90,
-            contrast_tau=0.08, min_area_px=25000, nuclei=None):
+            contrast_tau=0.08, min_area_px=25000, nuclei=None, k=1.0):
+    """Lengths/areas are in reference pixels and scaled by `k` (REF_PX_UM / pixel size).
+    `g` should already be intensity-normalized (normalize_green)."""
+    disk = lambda r: morphology.disk(max(1, round(r * k)))
     L = np.log1p(np.clip(g, 0, 20))
-    dens = filters.gaussian(L, sigma)
+    dens = filters.gaussian(L, sigma * k)
     fg = dens > filters.threshold_li(dens) * fg_k
-    fg = morphology.binary_opening(fg, morphology.disk(15))
-    fg = morphology.remove_small_objects(fg, max_size=8000)
-    fg = morphology.remove_small_holes(fg, max_size=20000)
+    fg = morphology.binary_opening(fg, disk(15))
+    fg = morphology.remove_small_objects(fg, max_size=int(8000 * k * k))
+    fg = morphology.remove_small_holes(fg, max_size=int(20000 * k * k))
 
-    d4 = filters.gaussian(L, 4)
-    v = filters.sato(d4, sigmas=[10, 16], black_ridges=True)
+    d4 = filters.gaussian(L, 4 * k)
+    v = filters.sato(d4, sigmas=[10 * k, 16 * k], black_ridges=True)
     vn = v / np.percentile(v, 99.5)
     valley = vn > np.percentile(vn[fg], valley_pct)
 
@@ -102,7 +129,7 @@ def segment(g, sigma=10, fg_k=0.75, valley_pct=88, seed_dist=90,
         lab = segmentation.watershed(vn + 0.5 * (1 - np.clip(dn, 0, 1)), nuclei, mask=fg)
         pk = np.array([r.centroid for r in measure.regionprops(nuclei)]).astype(int)
         return dict(dens=dens, fg=fg, valley=valley, seeds=pk, raw=lab, nuclei=nuclei,
-                    labels=smooth_labels(lab, nuclei))
+                    labels=smooth_labels(lab, nuclei, k))
 
     dist = filters.gaussian(ndi.distance_transform_edt(fg & ~valley), 3)
     pk = feature.peak_local_max(dist, min_distance=seed_dist, threshold_abs=25,
@@ -116,11 +143,11 @@ def segment(g, sigma=10, fg_k=0.75, valley_pct=88, seed_dist=90,
                 labels=smooth_labels(lab))
 
 
-def smooth_labels(lab, keep=None):
+def smooth_labels(lab, keep=None, k=1.0):
     """Open each ROI, fill holes, keep its largest piece; `keep` pixels (nuclei) are never lost."""
     out = np.zeros_like(lab)
     for l in range(1, lab.max() + 1):
-        m = morphology.binary_opening(lab == l, morphology.disk(9))
+        m = morphology.binary_opening(lab == l, morphology.disk(max(1, round(9 * k))))
         if keep is not None:
             m |= keep == l
         m = ndi.binary_fill_holes(m)
@@ -210,7 +237,7 @@ def save_outputs(a, g, res, px_um, outdir, prefix, edge_margin=3, binuc_tau=0.0,
                    ha='center', va='center', weight='bold', bbox=dict(fc='k', alpha=0.5, lw=0))
     if res.get('nuclei') is not None:
         ax[2].contour(res['nuclei'] > 0, [0.5], colors='w', linewidths=0.8, linestyles='--')
-        ax[0].imshow(np.dstack([sat[..., 1] * 0.3, sat[..., 1], np.clip(res['nuc_img'] / 120, 0, 1)]))
+        ax[0].imshow(np.dstack([sat[..., 1] * 0.3, sat[..., 1], np.clip(res['nuc_img'] / max(np.percentile(res['nuc_img'], 99.5), 1e-9), 0, 1)]))
         ax[0].set_title('mito (G, saturated) + nuclei (B)')
     n_ok = sum(r.get('status', 'ok') == 'ok' for r in rows)
     ax[2].set_title(f'{len(rows)} cell ROIs, {n_ok} pass QC (saturated LUT)' if nuc_mode else f'{len(rows)} cell ROIs (saturated LUT)')
@@ -219,13 +246,13 @@ def save_outputs(a, g, res, px_um, outdir, prefix, edge_margin=3, binuc_tau=0.0,
     return rows
 
 
-def load_nuclei(path):
+def load_nuclei(path, k=1.0):
     """Nuclear-stain image (B channel of an RGB TIFF, or grayscale) -> (intensity, labelled nuclei)."""
     na = tifffile.imread(path)
     nuc_img = na[..., 2].astype(float) if na.ndim == 3 else na.astype(float)
     if na.ndim == 3:
         nuc_img[ndi.binary_dilation((na[..., 0] > 200) & (na[..., 1] > 200), iterations=2)] = 0
-    return nuc_img, segment_nuclei(nuc_img)
+    return nuc_img, segment_nuclei(nuc_img, k=k)
 
 
 if __name__ == '__main__':
