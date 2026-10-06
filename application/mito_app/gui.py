@@ -6,6 +6,7 @@ os.environ.setdefault('QT_API', 'pyside6')
 import numpy as np
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
+from scipy.stats import t as scipy_t
 from PySide6.QtCore import QAbstractTableModel, QModelIndex, QObject, QSortFilterProxyModel, Qt, QThread, QUrl, Signal
 from PySide6.QtGui import QDesktopServices, QIcon, QPixmap
 from PySide6.QtWidgets import (
@@ -17,6 +18,7 @@ from PySide6.QtWidgets import (
 from . import __version__, pipeline, stats
 
 TIFF_FILTER = 'TIFF images (*.tif *.tiff);;All files (*)'
+GREEN_COLORS = {'positive': '#2CA02C', 'negative': '#7F7F7F'}
 CELL_COLORS = ['#4C9BE8', '#F28E2B', '#59A14F', '#E15759', '#B07AA1', '#EDC948', '#76B7B2', '#FF9DA7',
                '#9C755F', '#BAB0AC']
 
@@ -261,41 +263,78 @@ class ImageView(QScrollArea):
 
 
 class CorrelationTab(QWidget):
-    """Spearman heatmap of all mito x green metric pairs (click a square) + scatter of the chosen pair."""
+    """Heatmap of all mito x green metric pairs (click a square) + regression scatter of the chosen pair.
 
-    def __init__(self):
+    The scatter is split into quadrants at the mean (or median) of X and Y, so positive (I/III) and
+    negative (II/IV) relations are visible at a glance. With `pooled=True` (Analysis tab) the rows come
+    from many samples and can be filtered by dataset / preset / sample and coloured by any of them."""
+
+    def __init__(self, pooled=False):
         super().__init__()
+        self.pooled = pooled
         self.data = {'cell': [], 'mito': []}
         self.level = QComboBox(); self.level.addItem('Per cell', 'cell'); self.level.addItem('Per mito object', 'mito')
-        self.x = QComboBox(); self.y = QComboBox(); self.cell = QComboBox()
         self.group = green_group_combo()
+        self.x = QComboBox(); self.y = QComboBox(); self.cell = QComboBox()
+        self.dataset = QComboBox(); self.preset = QComboBox(); self.sample = QComboBox()
+        self.hstat = QComboBox(); self.hstat.addItem('Pearson r', 'r'); self.hstat.addItem('Spearman ρ', 'rho')
+        self.center = QComboBox(); self.center.addItem('mean', 'mean'); self.center.addItem('median', 'median')
+        self.color = QComboBox()
+        for label, key in (('green status', 'green_status'), ('sample', 'sample'), ('dataset', 'dataset'),
+                           ('preset', 'preset'), ('none', '')):
+            self.color.addItem(label, key)
         self.logx = QCheckBox('log X'); self.logy = QCheckBox('log Y')
-        top = QHBoxLayout()
-        for w in (QLabel('Level'), self.level, QLabel('Cells'), self.group, QLabel('X (mito)'), self.x, QLabel('Y (green)'), self.y,
-                  QLabel('Cell'), self.cell, self.logx, self.logy):
-            top.addWidget(w)
-        top.addStretch(1)
+        row1, row2 = QHBoxLayout(), QHBoxLayout()
+        for w in (QLabel('Level'), self.level, QLabel('Cells'), self.group):
+            row1.addWidget(w)
+        if pooled:
+            for w in (QLabel('Dataset'), self.dataset, QLabel('Preset'), self.preset, QLabel('Sample'), self.sample):
+                row1.addWidget(w)
+        else:
+            row1.addWidget(QLabel('Cell')); row1.addWidget(self.cell)
+        row1.addStretch(1)
+        for w in (QLabel('X (mito)'), self.x, QLabel('Y (green)'), self.y, QLabel('Heatmap'), self.hstat,
+                  QLabel('Quadrants at'), self.center):
+            row2.addWidget(w)
+        if pooled:
+            row2.addWidget(QLabel('Colour by')); row2.addWidget(self.color)
+        row2.addWidget(self.logx); row2.addWidget(self.logy); row2.addStretch(1)
+        self.export_btn = QPushButton('Export tables…')
+        if pooled:
+            row2.addWidget(self.export_btn)
         self.heat_fig = Figure(figsize=(6, 4)); self.heat = FigureCanvasQTAgg(self.heat_fig)
         self.sc_fig = Figure(figsize=(6, 4)); self.scatter = FigureCanvasQTAgg(self.sc_fig)
         self.heat.mpl_connect('button_press_event', self.on_heat_click)
         self.heat.mpl_connect('motion_notify_event', self.on_heat_hover)
-        self.rho = None
-        self.stat = QLabel(); self.stat.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self.vals = None
+        self.stat = QLabel(); self.stat.setTextInteractionFlags(Qt.TextSelectableByMouse); self.stat.setWordWrap(True)
         split = QSplitter(Qt.Horizontal); split.addWidget(self.heat); split.addWidget(self.scatter)
-        split.setSizes([500, 500])
-        lay = QVBoxLayout(self); lay.addLayout(top); lay.addWidget(split, 1); lay.addWidget(self.stat)
-        lay.addWidget(QLabel('Spearman rank correlation. Mito objects in the same cell are not independent, '
-                             'so per-object p values are optimistic; compare cells or images for inference.'))
+        split.setSizes([500, 600])
+        lay = QVBoxLayout(self); lay.addLayout(row1); lay.addLayout(row2); lay.addWidget(split, 1); lay.addWidget(self.stat)
+        note = QLabel('Line: least-squares regression (Pearson r, R², p of the slope); with log X / log Y it is fitted '
+                      'on log10 values. Spearman ρ is the rank version. Mito objects in the same cell are not '
+                      'independent, so per-object p values are optimistic.')
+        note.setWordWrap(True); lay.addWidget(note)
         self.level.currentIndexChanged.connect(self.level_changed)
-        self.group.currentIndexChanged.connect(self.level_changed)
-        for w in (self.x, self.y, self.cell):
+        for w in (self.group, self.dataset, self.preset, self.sample):
+            w.currentIndexChanged.connect(self.filters_changed)
+        for w in (self.x, self.y, self.cell, self.center, self.color):
             w.currentIndexChanged.connect(self.draw_scatter)
         for w in (self.logx, self.logy):
+            w.toggled.connect(self.draw_heat)
             w.toggled.connect(self.draw_scatter)
+        for w in (self.x, self.y):
+            w.setSizeAdjustPolicy(QComboBox.AdjustToContents)
         self.cell.currentIndexChanged.connect(self.draw_heat)
+        self.hstat.currentIndexChanged.connect(self.draw_heat)
+        self.export_btn.clicked.connect(self.export)
 
     def set_data(self, cell_rows, mito_rows):
         self.data = {'cell': cell_rows, 'mito': mito_rows}
+        for combo, key in ((self.dataset, 'dataset'), (self.preset, 'preset'), (self.sample, 'sample')):
+            combo.blockSignals(True); combo.clear()
+            combo.addItems(['All'] + sorted({str(r.get(key, '')) for r in cell_rows + mito_rows}))
+            combo.blockSignals(False)
         self.level_changed()
 
     def metrics(self):
@@ -304,10 +343,21 @@ class CorrelationTab(QWidget):
         rows = self.data[lv]
         return stats.available(xs, rows), stats.available(ys, rows)
 
+    def base_rows(self, level=None):
+        rows = filter_group(self.data[level or self.level.currentData()], self.group.currentData())
+        if self.pooled:
+            for combo, key in ((self.dataset, 'dataset'), (self.preset, 'preset'), (self.sample, 'sample')):
+                v = combo.currentText()
+                if v not in ('All', ''):
+                    rows = [r for r in rows if str(r.get(key, '')) == v]
+        return rows
+
     def rows(self):
-        rows = filter_group(self.data[self.level.currentData()], self.group.currentData())
+        rows = self.base_rows()
         c = self.cell.currentText()
-        return rows if self.level.currentData() == 'cell' or c in ('All', '') else [r for r in rows if r['cell'] == c]
+        if self.pooled or self.level.currentData() == 'cell' or c in ('All', ''):
+            return rows
+        return [r for r in rows if r['cell'] == c]
 
     def level_changed(self, *_):
         xs, ys = self.metrics()
@@ -316,43 +366,54 @@ class CorrelationTab(QWidget):
             for k, label in items:
                 combo.addItem(label, k)
             combo.blockSignals(False)
+        mito = self.level.currentData() == 'mito'
+        # object sizes span orders of magnitude; puncta counts include 0, which log would drop
+        for cb, on in ((self.logx, mito), (self.logy, False)):
+            cb.blockSignals(True); cb.setChecked(on); cb.blockSignals(False)
+        self.x.setCurrentIndex(0); self.y.setCurrentIndex(3 if mito else 1)  # length vs puncta / footprint vs green on mito
+        self.filters_changed()
+
+    def filters_changed(self, *_):
         self.cell.blockSignals(True); self.cell.clear()
-        self.cell.addItems(['All'] + sorted({r['cell'] for r in filter_group(self.data['mito'], self.group.currentData())}))
+        self.cell.addItems(['All'] + sorted({r['cell'] for r in self.base_rows('mito')}))
         self.cell.setEnabled(self.level.currentData() == 'mito')
         self.cell.blockSignals(False)
-        mito = self.level.currentData() == 'mito'
-        for cb in (self.logx, self.logy):  # object sizes span orders of magnitude
-            cb.blockSignals(True); cb.setChecked(mito); cb.blockSignals(False)
-        self.x.setCurrentIndex(0); self.y.setCurrentIndex(3 if mito else 1)  # length vs puncta / footprint vs green on mito
         self.draw_heat(); self.draw_scatter()
 
     def draw_heat(self, *_):
         xs, ys = self.metrics(); rows = self.rows()
-        rho = np.full((len(ys), len(xs)), np.nan)
+        use_r = self.hstat.currentData() == 'r'
+        vals = np.full((len(ys), len(xs)), np.nan)
         for j, (xk, _) in enumerate(xs):
             for i, (yk, _) in enumerate(ys):
-                rho[i, j] = stats.spearman(stats.numeric(rows, xk), stats.numeric(rows, yk))[0]
+                x, y = self.values(rows, xk, self.logx), self.values(rows, yk, self.logy)
+                vals[i, j] = stats.regression(x, y)['r'] if use_r else stats.spearman(x, y)[0]
+        name = 'Pearson r' if use_r else 'Spearman ρ'
+        if use_r and (self.logx.isChecked() or self.logy.isChecked()):
+            name += ' (' + ', '.join(a for a, cb in (('log X', self.logx), ('log Y', self.logy)) if cb.isChecked()) + ')'
         f = self.heat_fig; f.clear(); ax = f.add_subplot(111)
-        im = ax.imshow(rho, cmap='RdBu_r', vmin=-1, vmax=1, aspect='auto')
+        im = ax.imshow(vals, cmap='RdBu_r', vmin=-1, vmax=1, aspect='auto')
         ax.set_xticks(range(len(xs)), [l for _, l in xs], rotation=60, ha='right', fontsize=7)
         ax.set_yticks(range(len(ys)), [l for _, l in ys], fontsize=7)
-        self.rho = rho
-        for i in range(rho.shape[0]):
-            for j in range(rho.shape[1]):
-                if np.isfinite(rho[i, j]) and rho.size <= 100:  # numbers only where they fit; hover shows the rest
-                    ax.text(j, i, f'{rho[i, j]:.2f}', ha='center', va='center', fontsize=6,
-                            color='white' if abs(rho[i, j]) > 0.6 else 'black')
-        f.colorbar(im, ax=ax, fraction=0.04, label='Spearman ρ')
-        ax.set_title(f'Spearman ρ, n = {len(rows)}' + (' (too few cells for a reliable ρ)' if len(rows) < 8 else '')
+        self.vals = vals
+        for i in range(vals.shape[0]):
+            for j in range(vals.shape[1]):
+                if np.isfinite(vals[i, j]) and vals.size <= 100:  # numbers only where they fit; hover shows the rest
+                    ax.text(j, i, f'{vals[i, j]:.2f}', ha='center', va='center', fontsize=6,
+                            color='white' if abs(vals[i, j]) > 0.6 else 'black')
+        f.colorbar(im, ax=ax, fraction=0.04, label=name)
+        unit = 'cells' if self.level.currentData() == 'cell' else 'mito objects'
+        ax.set_title(f'{name}, n = {len(rows)} {unit}' + (' (too few for a reliable value)' if len(rows) < 8 else '')
                      + '\nclick a square to plot it', fontsize=9)
         f.tight_layout(); self.heat.draw_idle()
 
     def on_heat_hover(self, ev):
-        if ev.xdata is None or ev.ydata is None or self.rho is None:
+        if ev.xdata is None or ev.ydata is None or self.vals is None:
             return
         j, i = int(round(ev.xdata)), int(round(ev.ydata))
-        if 0 <= i < self.rho.shape[0] and 0 <= j < self.rho.shape[1]:
-            self.heat.setToolTip(f'{self.y.itemText(i)} vs {self.x.itemText(j)}: ρ = {self.rho[i, j]:.3f}')
+        if 0 <= i < self.vals.shape[0] and 0 <= j < self.vals.shape[1]:
+            self.heat.setToolTip(f'{self.y.itemText(i)} vs {self.x.itemText(j)}: {self.hstat.currentText()} = '
+                                 f'{self.vals[i, j]:.3f}')
 
     def on_heat_click(self, ev):
         if ev.xdata is None or ev.ydata is None:
@@ -363,33 +424,135 @@ class CorrelationTab(QWidget):
             self.y.setCurrentIndex(i)
             self.draw_scatter()
 
+    @staticmethod
+    def values(rows, key, log_cb):
+        v = stats.numeric(rows, key)
+        if log_cb.isChecked():
+            with np.errstate(divide='ignore', invalid='ignore'):
+                v = np.where(v > 0, np.log10(v), np.nan)  # values <= 0 have no log and are left out
+        return v
+
+    def color_key(self):
+        if not self.pooled:
+            return 'cell'
+        return self.color.currentData()
+
     def draw_scatter(self, *_):
         xk, yk = self.x.currentData(), self.y.currentData()
         f = self.sc_fig; f.clear(); ax = f.add_subplot(111)
         rows = self.rows()
         if not xk or not yk or not rows:
-            self.scatter.draw_idle(); return
-        x, y = stats.numeric(rows, xk), stats.numeric(rows, yk)
-        cells = sorted({r['cell'] for r in rows})
-        for n, c in enumerate(cells):
-            m = np.array([r['cell'] == c for r in rows])
-            ax.scatter(x[m], y[m], s=40 if self.level.currentData() == 'cell' else 12, alpha=0.75,
-                       color=CELL_COLORS[n % len(CELL_COLORS)], label=c, edgecolors='none')
-            if self.level.currentData() == 'cell':
+            self.scatter.draw_idle(); self.stat.setText(''); return
+        x, y = self.values(rows, xk, self.logx), self.values(rows, yk, self.logy)
+        xl = ('log10 ' if self.logx.isChecked() else '') + self.x.currentText()
+        yl = ('log10 ' if self.logy.isChecked() else '') + self.y.currentText()
+        ok = np.isfinite(x) & np.isfinite(y)
+        key = self.color_key()
+        cats = sorted({str(r.get(key, '')) for r in rows}) if key else ['']
+        many = len(cats) > 12
+        small = self.level.currentData() == 'mito' or len(rows) > 200
+        for n, c in enumerate(cats):
+            m = ok & (np.array([str(r.get(key, '')) == c for r in rows]) if key else ok)
+            color = GREEN_COLORS.get(c) if key == 'green_status' else CELL_COLORS[n % len(CELL_COLORS)]
+            ax.scatter(x[m], y[m], s=12 if small else 40, alpha=0.6 if small else 0.8, color=color or '#888888',
+                       label=None if many or not key else {'positive': 'green+', 'negative': 'green−'}.get(c, c),
+                       edgecolors='none')
+            if not self.pooled and self.level.currentData() == 'cell':
                 for xi, yi in zip(x[m], y[m]):
                     ax.annotate(c[4:], (xi, yi), textcoords='offset points', xytext=(4, 4), fontsize=8)
-        if self.logx.isChecked():
-            ax.set_xscale('symlog' if np.nanmin(x) <= 0 else 'log')
-        if self.logy.isChecked():
-            ax.set_yscale('symlog' if np.nanmin(y) <= 0 else 'log')
-        ax.set_xlabel(self.x.currentText()); ax.set_ylabel(self.y.currentText())
-        ax.legend(fontsize=7, frameon=False, ncol=2)
+        reg = stats.regression(x, y)
+        rho, p_s, _ = stats.spearman(x, y)
+        if ok.sum():
+            med = self.center.currentData() == 'median'
+            cx = np.median(x[ok]) if med else np.mean(x[ok])
+            cy = np.median(y[ok]) if med else np.mean(y[ok])
+            ax.axvline(cx, color='#555555', lw=0.9, ls='--'); ax.axhline(cy, color='#555555', lw=0.9, ls='--')
+            q = {'I': (x > cx) & (y > cy), 'II': (x < cx) & (y > cy), 'III': (x < cx) & (y < cy), 'IV': (x > cx) & (y < cy)}
+            tot = max(int(ok.sum()), 1)
+            for name, (hx, hy, ha, va) in {'I': (0.98, 0.98, 'right', 'top'), 'II': (0.02, 0.98, 'left', 'top'),
+                                           'III': (0.02, 0.02, 'left', 'bottom'), 'IV': (0.98, 0.02, 'right', 'bottom')}.items():
+                k_ = int((q[name] & ok).sum())
+                ax.text(hx, hy, f'{name}: {k_} ({100 * k_ / tot:.0f}%)', transform=ax.transAxes, ha=ha, va=va,
+                        fontsize=8, color='#333333', bbox=dict(facecolor='white', alpha=0.7, edgecolor='none', pad=1.5))
+        if np.isfinite(reg['slope']):
+            xs_ = np.linspace(np.nanmin(x[ok]), np.nanmax(x[ok]), 100)
+            ys_ = reg['slope'] * xs_ + reg['intercept']
+            # 95 % confidence band of the fitted line
+            n_ = reg['n']; xm = x[ok].mean()
+            resid = y[ok] - (reg['slope'] * x[ok] + reg['intercept'])
+            se = np.sqrt(np.sum(resid ** 2) / (n_ - 2)) * np.sqrt(1 / n_ + (xs_ - xm) ** 2 / np.sum((x[ok] - xm) ** 2))
+            tq = scipy_t.ppf(0.975, n_ - 2)
+            ax.fill_between(xs_, ys_ - tq * se, ys_ + tq * se, color='#E15759', alpha=0.15, lw=0)
+            ax.plot(xs_, ys_, color='#E15759', lw=1.8)
+        ax.set_xlabel(xl); ax.set_ylabel(yl)
+        if not many and key:
+            ax.legend(fontsize=7, frameon=False, ncol=2, loc='upper center')
         ax.spines[['top', 'right']].set_visible(False)
-        rho, p, n = stats.spearman(x, y)
-        ax.set_title(f'ρ = {rho:.3f}, p = {p:.2g}, n = {n}', fontsize=10)
+        ax.set_title(f"r = {reg['r']:.3f}, R² = {reg['r2']:.3f}, p = {reg['p']:.2g}, n = {reg['n']}"
+                     f"   (Spearman ρ = {rho:.3f})", fontsize=9)
         f.tight_layout(); self.scatter.draw_idle()
-        self.stat.setText(f'{self.y.currentText()} vs {self.x.currentText()}: Spearman ρ = {rho:.3f}, '
-                          f'p = {p:.3g}, n = {n}')
+        self.stat.setText(f"{yl} = {reg['slope']:.4g} × {xl} + {reg['intercept']:.4g};  Pearson r = {reg['r']:.3f}, "
+                          f"R² = {reg['r2']:.3f}, p = {reg['p']:.3g}, n = {reg['n']};  Spearman ρ = {rho:.3f}, "
+                          f"p = {p_s:.3g}")
+
+    def export(self):
+        if not (self.data['cell'] or self.data['mito']):
+            return
+        d = QFileDialog.getExistingDirectory(self, 'Export pooled tables to', getattr(self, 'export_dir', ''))
+        if not d:
+            return
+        tag = self.group.currentData() or 'all'
+        tag = {'positive': 'green_pos', 'negative': 'green_neg'}.get(tag, tag)
+        cells, mito = self.base_rows('cell'), self.base_rows('mito')
+        pipeline.write_csv(os.path.join(d, f'pooled_cells_{tag}.csv'), cells)
+        pipeline.write_csv(os.path.join(d, f'pooled_mito_{tag}.csv'), mito)
+        reg = stats.correlation_table(cells, mito)
+        pipeline.write_csv(os.path.join(d, f'pooled_regression_{tag}.csv'), reg)
+        pipeline.write_xlsx(os.path.join(d, f'pooled_{tag}.xlsx'),
+                            [('regression', reg), ('cells', cells), ('mito', mito)])
+        QMessageBox.information(self, 'Exported', f'{len(cells)} cells, {len(mito)} mito objects and the regression '
+                                f'table written to {d} (pooled_*_{tag}.*)')
+
+
+class AnalysisTab(QWidget):
+    """Pooled analysis of everything under an output folder (every <sample>_per_cell.csv / _per_mito.csv)."""
+
+    def __init__(self):
+        super().__init__()
+        self.folder = QLineEdit(); self.folder.setPlaceholderText('Output folder of earlier runs (searched recursively)')
+        browse = QPushButton('Browse…'); browse.clicked.connect(self.browse)
+        load = QPushButton('Load'); load.clicked.connect(self.load)
+        self.folder.returnPressed.connect(self.load)
+        self.info = QLabel('')
+        top = QHBoxLayout(); top.addWidget(QLabel('Results folder')); top.addWidget(self.folder, 1)
+        top.addWidget(browse); top.addWidget(load)
+        self.corr = CorrelationTab(pooled=True)
+        self.cells = TableTab(); self.mito = TableTab()
+        tabs = QTabWidget()
+        tabs.addTab(self.corr, 'Regression / correlation')
+        tabs.addTab(self.cells, 'Cells (all samples)')
+        tabs.addTab(self.mito, 'Mito objects (all samples)')
+        lay = QVBoxLayout(self); lay.addLayout(top); lay.addWidget(self.info); lay.addWidget(tabs, 1)
+
+    def browse(self):
+        d = QFileDialog.getExistingDirectory(self, 'Results folder', self.folder.text() or os.path.expanduser('~'))
+        if d:
+            self.folder.setText(d); self.load()
+
+    def load(self, *_):
+        d = os.path.expanduser(self.folder.text().strip())
+        if not os.path.isdir(d):
+            QMessageBox.warning(self, 'Not a folder', f'{d or "(empty)"} is not a folder.'); return
+        cells, mito, samples = pipeline.load_results(d)
+        if not samples:
+            QMessageBox.warning(self, 'Nothing found', f'No <sample>_per_cell.csv found under {d}.'); return
+        self.corr.export_dir = d
+        self.corr.set_data(cells, mito)
+        self.cells.set_rows(cells); self.mito.set_rows(mito)
+        n_pos = sum(r.get('green_status') == 'positive' for r in cells)
+        n_ds = len({r['dataset'] for r in cells}); n_pr = len({(r['dataset'], r['preset']) for r in cells})
+        self.info.setText(f'{len(samples)} samples ({n_ds} dataset(s), {n_pr} preset-dataset folder(s)): '
+                          f'{len(cells)} cells ({n_pos} green+, {len(cells) - n_pos} green−), {len(mito)} mito objects')
 
 
 class MainWindow(QMainWindow):
@@ -450,7 +613,12 @@ class MainWindow(QMainWindow):
         self.sens = self._spin(0.2, 5, 1.0, 2, ' ×', 0.05,
                                'Multiplies the automatic green puncta threshold: >1 keeps fewer, brighter puncta')
         self.min_mito = self._spin(0, 10, 0.05, 3, ' µm²', 0.01, 'Mito pieces smaller than this are left out of the per-mito table')
-        self.green_refine = QCheckBox('Refine cell ROIs with the green pattern')
+        self.green_split = QCheckBox('Split touching green+ cells by green intensity')
+        self.green_split.setChecked(True)
+        self.green_split.setToolTip('Green+ cells and their neighbours are redrawn by a watershed on green intensity '
+                                    '(borders along dark gaps). Dim nuclei and bright green territories without a '
+                                    'nucleus become their own cell when large enough and green-positive.')
+        self.green_refine = QCheckBox('Fine-tune cell ROIs with the green pattern')
         self.green_refine.setChecked(True)
         self.green_refine.setToolTip('A bright green patch outside the cells, or at the edge of a green-negative cell, '
                                      'within 2 µm of a green-positive cell is added to that cell\'s ROI')
@@ -464,6 +632,7 @@ class MainWindow(QMainWindow):
         of.addRow('Pixel size (0 = auto)', self.px)
         of.addRow('Green puncta threshold', self.sens)
         of.addRow('Minimum mito object', self.min_mito)
+        of.addRow(self.green_split)
         of.addRow(self.green_refine)
         of.addRow('Green+ cell: bright green ≥', self.green_pos)
 
@@ -497,7 +666,11 @@ class MainWindow(QMainWindow):
 
         split = QSplitter(); split.addWidget(left); split.addWidget(self.tabs)
         split.setStretchFactor(0, 0); split.setStretchFactor(1, 1); split.setSizes([620, 880])
-        self.setCentralWidget(split)
+        self.analysis = AnalysisTab()
+        top = QTabWidget()
+        top.addTab(split, 'Run'); top.addTab(self.analysis, 'Analysis (all samples)')
+        self.top_tabs = top
+        self.setCentralWidget(top)
         self.statusBar().showMessage('Add image sets (files or folders), then press Run all.')
 
     @staticmethod
@@ -609,7 +782,8 @@ class MainWindow(QMainWindow):
                                  include_edge_cells=self.incl_edge.isChecked(), pixel_size_um=self.px.value(),
                                  puncta_sensitivity=self.sens.value(), min_mito_area_um2=self.min_mito.value(),
                                  mito_method=self.mito_method.currentData(),
-                                 green_refine=self.green_refine.isChecked(), green_pos_percent=self.green_pos.value())
+                                 green_refine=self.green_refine.isChecked(), green_pos_percent=self.green_pos.value(),
+                                 green_split=self.green_split.isChecked())
         for r in range(n):
             self.table.set_status(r, 'queued')
         self.logbox.clear()
@@ -646,6 +820,9 @@ class MainWindow(QMainWindow):
             if self.table.text(r, JobTable.STATUS) == 'queued':
                 self.table.set_status(r, 'stopped')
         self.statusBar().showMessage(f'{ok} image set(s) done, {failed} failed. Results in {self.base_out}')
+        if ok and os.path.isdir(self.base_out):  # the pooled view follows the latest batch
+            self.analysis.folder.setText(self.base_out)
+            self.analysis.load()
         if failed:
             QMessageBox.warning(self, 'Some sets failed', f'{failed} image set(s) failed; hover the status cell '
                                 'or see the log for details.')

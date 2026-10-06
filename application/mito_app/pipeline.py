@@ -28,6 +28,7 @@ class Params:
     mito_method: str = 'split'        # 'split' = adaptive threshold + watershed objects, 'otsu' = MiNA classic
     green_refine: bool = True         # extend cell ROIs over nearby green patches of expressing cells
     green_pos_percent: float = 2.0    # cell is green-positive if bright green covers >= this % of its cytoplasm
+    green_split: bool = True          # redraw touching green-positive cells along green intensity valleys
 
 
 def sample_name(red_path):
@@ -107,6 +108,41 @@ def write_group_tables(results):
         write_xlsx(os.path.join(d, f'{tag}_all_results.xlsx'), sheets + [('all_cells', cells), ('all_mito', mito)])
 
 
+def _num(v):
+    try:
+        return float(v) if v not in ('', 'True', 'False') else v
+    except ValueError:
+        return v
+
+
+def read_csv(path):
+    with open(path, newline='') as f:
+        return [{k: _num(v) for k, v in r.items()} for r in csv.DictReader(f)]
+
+
+def load_results(root):
+    """Every sample under `root` (any depth): rows of <sample>_per_cell.csv and <sample>_per_mito.csv with
+    dataset / preset / sample columns taken from the <dataset>/<preset>-<dataset>/<sample>/ layout.
+    Returns (cell_rows, mito_rows, sample folders)."""
+    cells, mito, samples = [], [], []
+    for d, dirs, files in os.walk(root):
+        dirs.sort()
+        for f in sorted(files):
+            if not f.endswith('_per_cell.csv') or f.endswith('_mina_per_cell.csv'):
+                continue
+            name = f[:-len('_per_cell.csv')]
+            up = os.path.basename(os.path.dirname(d))
+            dataset = os.path.basename(os.path.dirname(os.path.dirname(d)))
+            preset = up[:-len(dataset) - 1] if dataset and up.endswith('-' + dataset) else up
+            meta = dict(dataset=dataset, preset=preset, sample=name)
+            cells += [dict(meta, **r) for r in read_csv(os.path.join(d, f))]
+            mp = os.path.join(d, f'{name}_per_mito.csv')
+            if os.path.exists(mp):
+                mito += [dict(meta, **r) for r in read_csv(mp)]
+            samples.append(d)
+    return cells, mito, samples
+
+
 def _as_rgb(a, g):
     """cell_roi overlays expect an RGB uint8 array; wrap single-channel input as green."""
     if a.ndim == 3 and a.shape[-1] == 3:
@@ -143,15 +179,18 @@ def run(red_path, green_path, blue_path, outdir, params=None, name=None, log=pri
     res = cell_roi.segment(gn, min_area_px=int(p.min_area_um2 / px ** 2), nuclei=nuc, k=k)
     res['nuc_img'] = nuc_img
     lab0 = res['labels']
-    log('     Green pattern: ' + ('refining cell ROIs and ' if p.green_refine else '') + 'calling green+/- cells')
-    res['labels'], gstatus, ginfo = green_cells.refine(
-        gn, lab0, nuc, px, k, min_fraction=p.green_pos_percent / 100, do_refine=p.green_refine,
+    log('     Green: ' + ('splitting expressing cells by intensity, ' if p.green_split else '')
+        + ('refining ROIs by the expression pattern, ' if p.green_refine else '') + 'calling green+/- cells')
+    res['labels'], gstatus, ginfo = green_cells.process(
+        gn, lab0, nuc, nuc_img, res['landscape'], px, k, min_fraction=p.green_pos_percent / 100,
+        min_area_px=int(p.min_area_um2 / px ** 2), do_split=p.green_split, do_refine=p.green_refine,
         log=lambda s: log('     ' + s))
     rois = cell_roi.save_outputs(a, gn, res, px, outdir, name, binuc_tau=p.binuc_tau,
                                  exclude_binuc=p.exclude_binucleate)
     n_ok = sum(r['status'] == 'ok' for r in rois)
     for r in rois:
         r['green_status'] = gstatus[int(r['roi'][4:])]
+        r['seed'] = ginfo['new_cells'].get(int(r['roi'][4:]), 'nucleus')
     log(f'     {len(rois)} cell ROIs, {n_ok} pass QC (not touching the border'
         + (', not binucleate)' if p.exclude_binucleate else ')'))
 
@@ -241,7 +280,7 @@ def run(red_path, green_path, blue_path, outdir, params=None, name=None, log=pri
 GREEN_GROUPS = (('positive', 'green_pos'), ('negative', 'green_neg'))
 
 
-PER_CELL_ROI_COLS = ('centroid_x', 'centroid_y', 'touches_border', 'weak_border_with')
+PER_CELL_ROI_COLS = ('seed', 'centroid_x', 'centroid_y', 'touches_border', 'weak_border_with')
 
 
 def merge_cell_rows(rois, rows):
@@ -352,11 +391,14 @@ def render_green_cells(gn, lab0, lab, info, status, analysed, path):
         ax.contour(m, [0.5], colors='#ff5050' if pos else '#c8c8c8', linewidths=2.2 if pos else 1.0)
         cy, cx = ndi.center_of_mass(m)
         name = f'cell{l:02d}'
-        ax.text(cx, cy, f"{l}{'+' if pos else '−'}" + ('' if name in analysed else '\n(not analysed)'),
+        seed = info.get('new_cells', {}).get(l)
+        ax.text(cx, cy, f"{l}{'+' if pos else '−'}" + (f'\n(new: {seed})' if seed else '')
+                + ('' if name in analysed else '\n(not analysed)'),
                 color='white', fontsize=(13 if pos else 10) if name in analysed else 8, weight='bold', ha='center', va='center',
                 bbox=dict(facecolor='#b00000' if pos else 'black', alpha=0.6, pad=1.5, edgecolor='none'))
     n_mv = len(info['moved'])
     ax.set_title(f'Green+ cells (red outline) / green− (grey). Yellow: bright green >= {info["threshold"]:.1f}. '
-                 + (f'{n_mv} green patch(es) moved into the expressing cell; blue dashed = ROI before refinement.'
-                    if n_mv else 'No ROI changed by the green pattern.'), fontsize=9)
+                 + (f'{len(info.get("new_cells", {}))} cell(s) split off by green intensity, '
+                    f'{n_mv} green patch(es) moved into the expressing cell; blue dashed = ROI before the green steps.'
+                    if (lab0 != lab).any() else 'No ROI changed by the green steps.'), fontsize=9)
     fig.tight_layout(); fig.savefig(path)

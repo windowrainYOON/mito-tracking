@@ -126,9 +126,10 @@ def segment(g, sigma=10, fg_k=0.75, valley_pct=88, seed_dist=90,
     if nuclei is not None:
         fg = fg | (nuclei > 0)
         dn = dens / np.percentile(dens[fg], 99)
-        lab = segmentation.watershed(vn + 0.5 * (1 - np.clip(dn, 0, 1)), nuclei, mask=fg)
+        land = vn + 0.5 * (1 - np.clip(dn, 0, 1))
+        lab = segmentation.watershed(land, nuclei, mask=fg)
         pk = np.array([r.centroid for r in measure.regionprops(nuclei)]).astype(int)
-        return dict(dens=dens, fg=fg, valley=valley, seeds=pk, raw=lab, nuclei=nuclei,
+        return dict(dens=dens, fg=fg, valley=valley, seeds=pk, raw=lab, nuclei=nuclei, landscape=land,
                     labels=smooth_labels(lab, nuclei, k))
 
     dist = filters.gaussian(ndi.distance_transform_edt(fg & ~valley), 3)

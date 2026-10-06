@@ -59,13 +59,32 @@ def spearman(x, y):
     return float(res.statistic), float(res.pvalue), n
 
 
+def regression(x, y):
+    """Least-squares line y = slope * x + intercept with Pearson r, R² and the two-sided p of the slope."""
+    ok = np.isfinite(x) & np.isfinite(y)
+    n = int(ok.sum())
+    nan = dict(slope=math.nan, intercept=math.nan, r=math.nan, r2=math.nan, p=math.nan, n=n)
+    if n < 3 or np.ptp(x[ok]) == 0 or np.ptp(y[ok]) == 0:
+        return nan
+    res = stats.linregress(x[ok], y[ok])
+    return dict(slope=float(res.slope), intercept=float(res.intercept), r=float(res.rvalue),
+                r2=float(res.rvalue ** 2), p=float(res.pvalue), n=n)
+
+
+def pair_stats(x, y):
+    """Pearson regression and Spearman rank correlation of one metric pair."""
+    reg = regression(x, y)
+    rho, p_s, _ = spearman(x, y)
+    return dict(pearson_r=reg['r'], r2=reg['r2'], slope=reg['slope'], intercept=reg['intercept'], p_value=reg['p'],
+                spearman_rho=rho, spearman_p=p_s, n=reg['n'])
+
+
 def correlation_table(cell_rows, mito_rows):
-    """Spearman rho for every mito metric x green metric pair, at cell and mito level.
+    """Pearson r / linear regression and Spearman rho for every mito metric x green metric pair, at cell and mito level.
     Mito-level rows are pooled over all analysed cells; objects within a cell are not independent."""
     out = []
     for level, rows, xs, ys in (('cell', cell_rows, CELL_X, CELL_Y), ('mito', mito_rows, MITO_X, MITO_Y)):
         for xk, xl in available(xs, rows):
             for yk, yl in available(ys, rows):
-                rho, p, n = spearman(numeric(rows, xk), numeric(rows, yk))
-                out.append(dict(level=level, x=xk, y=yk, spearman_rho=rho, p_value=p, n=n))
+                out.append(dict(level=level, x=xk, y=yk, **pair_stats(numeric(rows, xk), numeric(rows, yk))))
     return out
