@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
     QSplitter, QTableView, QTableWidget, QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget,
 )
 
-from . import __version__, pipeline, stats
+from . import __version__, nuclei, pipeline, stats
 
 TIFF_FILTER = 'TIFF images (*.tif *.tiff);;All files (*)'
 GREEN_COLORS = {'positive': '#2CA02C', 'negative': '#7F7F7F'}
@@ -637,6 +637,13 @@ class MainWindow(QMainWindow):
         self.sens = self._spin(0.2, 5, 1.0, 2, ' ×', 0.05,
                                'Multiplies the automatic green puncta threshold: >1 keeps fewer, brighter puncta')
         self.min_mito = self._spin(0, 10, 0.05, 3, ' µm²', 0.01, 'Mito pieces smaller than this are left out of the per-mito table')
+        self.nuclei_method = QComboBox()
+        for key, label in nuclei.METHODS:
+            self.nuclei_method.addItem(label, key)
+        self.nuclei_method.setToolTip('Texture: nuclei are told from diffuse cytoplasmic blue by their chromatin '
+                                      'texture, each with its own threshold; merge keeps curved nuclei whole while '
+                                      'touching nuclei with a dark, narrow contact stay apart. Global Otsu is the '
+                                      'old one-threshold method.')
         self.dim_nuclei = QCheckBox('Dim (out-of-focus) nuclei also get their own cell')
         self.dim_nuclei.setChecked(True)
         self.dim_nuclei.setToolTip('Faint, compact nuclei clear of the in-focus ones seed a cell too, so their '
@@ -651,6 +658,7 @@ class MainWindow(QMainWindow):
         of.addRow('Pixel size (0 = auto)', self.px)
         of.addRow('Green puncta threshold', self.sens)
         of.addRow('Minimum mito object', self.min_mito)
+        of.addRow('Nucleus detection', self.nuclei_method)
         of.addRow(self.dim_nuclei)
         of.addRow('Green+ cell: bright green ≥', self.green_pos)
 
@@ -800,7 +808,8 @@ class MainWindow(QMainWindow):
                                  include_edge_cells=self.incl_edge.isChecked(), pixel_size_um=self.px.value(),
                                  puncta_sensitivity=self.sens.value(), min_mito_area_um2=self.min_mito.value(),
                                  mito_method=self.mito_method.currentData(),
-                                 green_pos_percent=self.green_pos.value(), dim_nuclei=self.dim_nuclei.isChecked())
+                                 green_pos_percent=self.green_pos.value(), dim_nuclei=self.dim_nuclei.isChecked(),
+                                 nuclei_method=self.nuclei_method.currentData())
         for r in range(n):
             self.table.set_status(r, 'queued')
         self.logbox.clear()

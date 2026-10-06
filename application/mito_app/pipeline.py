@@ -12,7 +12,7 @@ from dataclasses import asdict, dataclass
 
 import numpy as np
 
-from . import cell_roi, green_cells, mina, mito_objects, stats
+from . import cell_roi, nuclei, green_cells, mina, mito_objects, stats
 from . import green as green_q
 
 
@@ -28,6 +28,7 @@ class Params:
     mito_method: str = 'split'        # 'split' = adaptive threshold + watershed objects, 'otsu' = MiNA classic
     green_pos_percent: float = 2.0    # cell is green-positive if bright green covers >= this % of its cytoplasm
     dim_nuclei: bool = True           # out-of-focus nuclei also seed (and own) a cell
+    nuclei_method: str = 'texture_merge'  # nucleus detection: 'texture_merge', 'texture' or 'otsu' (mito_app/nuclei.py)
 
 
 def sample_name(red_path):
@@ -191,7 +192,8 @@ def run(red_path, green_path, blue_path, outdir, params=None, name=None, log=pri
         log(f'     No pixel size in the TIFF; assuming {px} um/px (set it in Options if different)')
     k = float(np.clip(cell_roi.REF_PX_UM / px, 0.2, 5))
     a = _as_rgb(a, g)
-    nuc_img, nuc = cell_roi.load_nuclei(blue_path, k)
+    nuc_img, _ = cell_roi.load_nuclei(blue_path, k)  # scale bar removed
+    nuc, dim, ninfo = nuclei.detect(nuc_img, k, p.nuclei_method)
     red, _ = mina.load_channel(red_path, 0)
     green, _ = mina.load_channel(green_path, 1)
     if not (red.shape == g.shape == nuc_img.shape):
@@ -202,8 +204,10 @@ def run(red_path, green_path, blue_path, outdir, params=None, name=None, log=pri
 
     log('2/5  Segmenting cells (one nucleus per cell; mito-free lines and cell shape set the borders)')
     n_focus = int(nuc.max())
+    if p.nuclei_method != 'otsu':
+        log(f"     nuclei ({p.nuclei_method}): {n_focus} in focus, {int((np.unique(dim) > 0).sum())} dim, "
+            f"{ninfo['n_rejected']} smooth (untextured) blue regions rejected")
     if p.dim_nuclei:
-        dim = cell_roi.find_dim_nuclei(nuc_img, nuc, px, k)
         nuc = np.where(dim > 0, dim, nuc)
         if nuc.max() > n_focus:
             log(f'     + {int(nuc.max()) - n_focus} dim (out-of-focus) nuclei used as cell seeds')

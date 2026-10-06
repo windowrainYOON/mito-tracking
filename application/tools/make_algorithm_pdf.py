@@ -20,7 +20,7 @@ matplotlib.use('Agg')
 from matplotlib import font_manager, pyplot as plt  # noqa: E402
 from matplotlib.backends.backend_pdf import PdfPages  # noqa: E402
 
-from mito_app import __version__, cell_roi, green as green_q, green_cells, mina, mito_objects, pipeline, stats  # noqa: E402
+from mito_app import __version__, cell_roi, green as green_q, green_cells, mina, mito_objects, nuclei, pipeline, stats  # noqa: E402
 
 KO_FONTS = ('AppleGothic', 'Apple SD Gothic Neo', 'Malgun Gothic', 'NanumGothic', 'Noto Sans CJK KR',
             'WenQuanYi Zen Hei')
@@ -98,12 +98,12 @@ def main(argv=None):
     a, g, px = cell_roi.load_green(A.green)
     px = px if px != 1.0 else cell_roi.REF_PX_UM
     k = float(np.clip(cell_roi.REF_PX_UM / px, 0.2, 5))
-    nuc_img, nuc0 = cell_roi.load_nuclei(A.blue, k)
+    nuc_img, _ = cell_roi.load_nuclei(A.blue, k)
+    nuc0, dim, ninfo = nuclei.detect(nuc_img, k, pipeline.Params().nuclei_method)
     red, _ = mina.load_channel(A.red, 0)
     green, _ = mina.load_channel(A.green, 1)
     gn, nrm = cell_roi.normalize_green(g, k)
     n_focus = int(nuc0.max())
-    dim = cell_roi.find_dim_nuclei(nuc_img, nuc0, px, k)
     nuc = np.where(dim > 0, dim, nuc0)
     seg = cell_roi.segment(gn, nuclei=nuc, k=k)
     morph = cell_roi.segment_morph(red, nuc, seg['landscape'], px, k)
@@ -178,22 +178,35 @@ def main(argv=None):
 
         # 2. nuclei
         nimg = rgb(B * 0.3, B * 0.3, B)
+        nimg = outline(nimg, ninfo['rejected'], (0, 0.9, 1))
         nimg = outline(nimg, nuc0, (1, 1, 0)); nimg = outline(nimg, dim, (1, 0.3, 1))
+        sflat = nuclei.flatten(filters.gaussian(nuc_img, 2 * k, preserve_range=True), k, px=px)
+        tex = np.zeros(nuc_img.shape)
+        for l, (t, _) in ninfo['texture'].items():
+            tex[ninfo['regions'] == l] = t
         page(pdf, '1-1단계 — 핵 찾기 (세포의 씨앗)',
              '세포 하나에는 핵이 하나 있고, 세포질은 핵을 둘러싸고 있다는\n'
              '형태를 그대로 이용합니다. 핵이 각 세포 ROI의 씨앗(seed)입니다.\n\n'
-             '초점이 맞은 핵 (노란 윤곽)\n'
-             '  - blue를 σ = 2 px로 부드럽게 → Otsu 임계값\n'
-             '  - 열림 연산(3 px)으로 잡음 제거, 구멍 채움,\n'
-             '    약 30 µm²보다 작은 조각 제거\n\n'
-             '흐린(초점 밖) 핵 (분홍 윤곽)\n'
-             '  - 부드럽게 한 blue가 Otsu 값의 40 % 이상\n'
-             '  - 초점 맞은 핵과 떨어져 있고, 충분히 크고(최소 핵 면적의\n'
-             '    40 %), 둥글고 꽉 찬(solidity ≥ 0.8) 덩어리\n'
-             '  - 이 세포도 자기 ROI를 가져서, 그 미토콘드리아가 옆 세포로\n'
-             '    넘어가지 않습니다. 표의 seed 열 = "dim nucleus"\n\n'
-             f'이 이미지: 초점 맞은 핵 {n_focus}개, 흐린 핵 {int(nuc.max()) - n_focus}개',
-             [('blue + 핵 윤곽 (노랑: 초점, 분홍: 흐린 핵)', nimg)], cols=1)
+             '핵 염색에는 세포질에 퍼진 흐린 blue, 잡음, 핵 안의 어두운 구멍이\n'
+             '섞여 있습니다. 진짜 핵은 염색질 무늬(texture)가 있고, 세포질의\n'
+             'blue는 매끈합니다. 이 차이로 핵을 고릅니다.\n\n'
+             '  1. σ = 2 px로 부드럽게, 25 µm 배경 제거 → Otsu 값의 50 %로 후보\n'
+             '  2. 거리 지도 watershed로 후보를 조각으로 나눔\n'
+             '  3. 조각마다 무늬 값(잡음을 뺀 표준편차 / 중앙값) 계산:\n'
+             '     ≥ 0.22 이거나, ≥ 0.17 이면서 이 이미지의 무늬 있는 핵만큼\n'
+             '     밝으면(중앙값 ≥ 0.7 × 기준) 남김. 나머지는 버림 (하늘색)\n'
+             '  4. 남은 이웃 조각은 합침. 접촉선이 어둡고(경계 < 0.8 × 내부)\n'
+             '     좁을 때만 따로 둠 → 휜 핵은 하나로, 붙은 두 핵은 둘로\n'
+             '  5. 핵마다 자기 임계값(핵 중심과 주변의 중간)으로 윤곽을 다시\n'
+             '     잡고, 가장자리 홈을 메움. 둥글지 않으면(solidity < 0.8) 버림\n'
+             '  6. 밝기가 기준의 50 % 이상이고 충분히 크면 초점 맞은 핵(노랑),\n'
+             '     아니면 흐린 핵(분홍, 최소 약 40 µm²). 흐린 핵도 자기 세포를\n'
+             '     가집니다 (표의 seed 열 = "dim nucleus").\n\n'
+             f'이 이미지: 초점 맞은 핵 {n_focus}개, 흐린 핵 {int(nuc.max()) - n_focus}개, '
+             f'버린 매끈한 영역 {ninfo["n_rejected"]}개',
+             [('A. 배경 제거한 blue', norm(sflat), 'gray'),
+              ('B. 후보 영역의 무늬 값 (밝을수록 무늬 강함)', np.clip(tex / 0.4, 0, 1), 'magma'),
+              ('C. 결과 (노랑: 초점 핵, 분홍: 흐린 핵, 하늘색: 버린 영역)', nimg)])
 
         # 3. mito density / ridges / fg
         page(pdf, '1-2단계 — 미토콘드리아 밀도와 "끊어지는 선"',

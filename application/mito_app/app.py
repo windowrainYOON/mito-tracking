@@ -30,12 +30,14 @@ def cli(argv):
     ap.add_argument('--min-mito-area-um2', type=float, default=0.05)
     ap.add_argument('--mito-method', choices=('split', 'otsu'), default='split')
     ap.add_argument('--no-dim-nuclei', action='store_true', help='only in-focus nuclei seed a cell')
+    ap.add_argument('--nuclei-method', choices=('texture_merge', 'texture', 'otsu'), default='texture_merge',
+                    help='nucleus detection (see mito_app/nuclei.py)')
     ap.add_argument('--green-pos-percent', type=float, default=2.0,
                     help='green-positive cell: bright green covers at least this %% of the cytoplasm')
     A = ap.parse_args(argv)
     p = pipeline.Params(A.min_area_um2, A.binuc_tau, A.exclude_binucleate, A.include_edge_cells,
                         A.pixel_size_um, A.puncta_sensitivity, A.min_mito_area_um2, A.mito_method,
-                        A.green_pos_percent, not A.no_dim_nuclei)
+                        A.green_pos_percent, not A.no_dim_nuclei, A.nuclei_method)
     if not A.batch:
         if len(A.inputs) != 3:
             ap.error('give RED GREEN BLUE, or use --batch')
