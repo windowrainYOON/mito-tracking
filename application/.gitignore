@@ -1,0 +1,6 @@
+.venv/
+build/
+dist/
+*.app/
+__pycache__/
+results/
