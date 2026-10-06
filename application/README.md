@@ -8,7 +8,7 @@ Per-cell mitochondrial network analysis for three-channel images of the same fie
 | Green | protein of interest | mean intensity per cell; its weak autofluorescence outlines cells |
 | Blue | nuclei | one in-focus nucleus = one cell (watershed seeds) |
 
-Inputs are ImageJ RGB TIFF exports with the signal in the matching channel (e.g. `…_Ch1_Red.tif`, `…_Ch2_Green.tif`, `…_Ch3_Blue.tif`); single-channel 8-bit TIFFs also work. Picking one file auto-fills the other two when the names follow that pattern.
+Inputs are ImageJ RGB TIFF exports with the signal in the matching channel (e.g. `…_Ch1_Red.tif`, `…_Ch2_Green.tif`, `…_Ch3_Blue.tif`); single-channel 8-bit TIFFs also work. Files are grouped into red/green/blue sets by that naming pattern.
 
 GUI toolkit: **PySide6 (Qt)**, cross-platform (macOS, Windows, Linux).
 
@@ -26,9 +26,14 @@ GUI toolkit: **PySide6 (Qt)**, cross-platform (macOS, Windows, Linux).
    - Spearman correlations of every mito metric × green metric, per cell and per mito object.
 
 ## In the app
+**Image sets table** (batch input): add files or whole folders (*Add files… / Add folder…*, or drop them on the table); every complete red/green/blue set becomes one row with editable *Dataset* (default: the images' folder name), *Preset* (default: the mito method, `split` / `otsu`; type e.g. a condition name instead) and *Sample* (from the file name). Double-click a channel cell to swap its file. *Run all* analyses the rows one after another (*Stop* finishes the current set and stops); a failed set is marked and the batch goes on. Click a finished row to show its results.
+
 Tabs: **Cells** (all per-cell metrics), **Mito objects** and **Green puncta** (sortable, filter by cell), **Correlation** (Spearman heatmap of all pairs; click a square for the scatter plot, coloured by cell), and overlay images.
 
-## Outputs (in the output folder, prefixed with the sample name)
+## Outputs
+Folder layout: `<output>/<dataset>/<preset>-<dataset>/<sample>/`. Each `<preset>-<dataset>` folder also gets the pooled tables of its samples: `<preset>-<dataset>_all_cells.csv`, `…_all_mito.csv`, `…_all_results.xlsx` (with a `sample` column).
+
+Per sample (in its own folder, prefixed with the sample name):
 - `_results.xlsx` – sheets `cells`, `mito`, `green_puncta`, `correlations`, `settings`
 - `_per_cell.csv`, `_per_mito.csv`, `_green_puncta.csv`, `_correlations.csv` – the same tables as CSV
 - `_green_on_mito.png` – mito objects (magenta), puncta on mito (yellow) / off mito (cyan)
@@ -51,7 +56,8 @@ Requires Python 3.11+. The app is unsigned and built locally; if macOS still blo
 cd application
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/python run_app.py                       # GUI
-.venv/bin/python run_app.py --cli RED.tif GREEN.tif BLUE.tif -o OUTDIR   # headless
+.venv/bin/python run_app.py --cli RED.tif GREEN.tif BLUE.tif -o OUTDIR   # headless, one set
+.venv/bin/python run_app.py --cli --batch FOLDER [FOLDER…] -o OUTDIR [--dataset NAME] [--preset NAME]  # headless batch
 ```
 
 ## Icon

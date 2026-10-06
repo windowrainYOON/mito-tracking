@@ -50,6 +50,54 @@ def find_siblings(path):
     return out
 
 
+def find_sets(paths):
+    """Group TIFF files (or the TIFFs inside folders) into red/green/blue image sets by file name.
+
+    Returns (sets, leftover): sets is a list of {'red', 'green', 'blue'} dicts in name order,
+    leftover the files that could not be placed in a complete set."""
+    files = []
+    for p in paths:
+        if os.path.isdir(p):
+            files += [os.path.join(p, f) for f in sorted(os.listdir(p))
+                      if f.lower().endswith(('.tif', '.tiff')) and not f.startswith('.')]
+        elif os.path.isfile(p):
+            files.append(p)
+    sets, used = {}, set()
+    for f in files:
+        s = find_siblings(f)
+        if len(s) == 3:
+            sets[s['red']] = s
+            used.update(s.values())
+    leftover = [f for f in files if f not in used]
+    return [sets[k] for k in sorted(sets)], leftover
+
+
+def safe_name(s):
+    """Folder-safe version of a dataset / preset / sample name."""
+    return re.sub(r'[\\/:*?"<>|]+', '_', str(s)).strip(' .') or 'unnamed'
+
+
+def job_outdir(base, dataset, preset, name):
+    """<output>/<dataset>/<preset>-<dataset>/<sample>/"""
+    d, p = safe_name(dataset), safe_name(preset)
+    return os.path.join(base, d, f'{p}-{d}', safe_name(name))
+
+
+def write_group_tables(results):
+    """Pool the per-cell / per-mito tables of all samples in each <preset>-<dataset> folder
+    (`<preset>-<dataset>_all_cells.csv`, `…_all_mito.csv`, `…_all_results.xlsx`)."""
+    groups = {}
+    for r in results:
+        groups.setdefault(os.path.dirname(r['outdir']), []).append(r)
+    for d, rs in groups.items():
+        tag = os.path.basename(d)
+        cells = [dict(sample=r['name'], **row) for r in rs for row in r['rows']]
+        mito = [dict(sample=r['name'], **row) for r in rs for row in r['mito_rows']]
+        write_csv(os.path.join(d, f'{tag}_all_cells.csv'), cells)
+        write_csv(os.path.join(d, f'{tag}_all_mito.csv'), mito)
+        write_xlsx(os.path.join(d, f'{tag}_all_results.xlsx'), [('cells', cells), ('mito', mito)])
+
+
 def _as_rgb(a, g):
     """cell_roi overlays expect an RGB uint8 array; wrap single-channel input as green."""
     if a.ndim == 3 and a.shape[-1] == 3:
