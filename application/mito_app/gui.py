@@ -554,6 +554,11 @@ def group_combo():
     return c
 
 
+def fmt_p(p):
+    """p value for display; values that underflow to 0 are shown as < 1e-300."""
+    return 'n/a' if not np.isfinite(p) else ('< 1e-300' if p < 1e-300 else f'{p:.2g}')
+
+
 class GroupCorrTab(QWidget):
     """Correlation heatmaps of two groups side by side and the difference between them (B − A).
 
@@ -641,9 +646,12 @@ class GroupCorrTab(QWidget):
             p = R['p'][i, j]
             lines.append(f"  {R['ys'][i][1]} vs {R['xs'][j][1]}:  A {R['va'][i, j]:+.2f} (n={R['na'][i, j]})  "
                          f"B {R['vb'][i, j]:+.2f} (n={R['nb'][i, j]})  Δ {R['d'][i, j]:+.2f}  "
-                         f"p = {p:.2g}" + (' *' if np.isfinite(p) and p < 0.05 else ''))
+                         f"p {fmt_p(p) if fmt_p(p).startswith('<') else '= ' + fmt_p(p)}"
+                         + (' *' if np.isfinite(p) and p < 0.05 else ''))
         if not order:
             lines.append('  none computable: each group needs at least 3 ' + unit)
+        elif self.level.currentData() == 'mito':
+            lines.append('  (mito objects of one cell are not independent, so these p values are optimistic)')
         self.top.setText('\n'.join(lines))
 
     def on_hover(self, ev):
@@ -782,13 +790,15 @@ class GroupStatsTab(QWidget):
                         mew=2.2, elinewidth=1.4, capsize=8, capthick=1.4, zorder=5)
         ax.set_xticks(range(len(groups)),
                       [f'{g}\nn = {len(a)}' for g, a in zip(groups, arrays)], fontsize=8)
-        ax.set_xlim(-0.6, len(groups) - 0.4)
+        pad = max(0.0, (4 - len(groups)) / 2)  # keep few groups close together on a wide axis
+        ax.set_xlim(-0.6 - pad, len(groups) - 0.4 + pad)
         ax.set_ylabel(self.metric.currentText())
         ax.spines[['top', 'right']].set_visible(False)
         p1, p2, n1, n2 = stats.group_test(arrays)
         unit = {'row': 'cells' if self.level.currentData() == 'cell' else 'mito objects',
                 'image': 'images'}[self.unit.currentData()]
-        ax.set_title(f'{self.err.currentText()}, unit = {unit};  {n1} p = {p1:.3g},  {n2} p = {p2:.3g}', fontsize=9)
+        ax.set_title(f'{self.err.currentText()}, unit = {unit};  {n1} p {fmt_p(p1) if fmt_p(p1).startswith("<") else "= " + fmt_p(p1)},'
+                     f'  {n2} p {fmt_p(p2) if fmt_p(p2).startswith("<") else "= " + fmt_p(p2)}', fontsize=9)
         f.tight_layout(); self.canvas.draw_idle()
 
     def export(self):
@@ -1004,11 +1014,13 @@ class MainWindow(QMainWindow):
         self.open_btn.clicked.connect(self.open_out)
         btns = QHBoxLayout(); btns.addWidget(self.run_btn, 2); btns.addWidget(self.open_btn, 1)
 
-        self.logbox = QPlainTextEdit(); self.logbox.setReadOnly(True)
+        self.logbox = QPlainTextEdit(); self.logbox.setReadOnly(True); self.logbox.setMaximumHeight(200)
         self.logbox.setPlaceholderText('Progress appears here.')
 
         left = QWidget(); lv = QVBoxLayout(left)
-        lv.addWidget(inp, 3); lv.addWidget(opt); lv.addLayout(btns); lv.addWidget(QLabel('Log')); lv.addWidget(self.logbox, 2)
+        opt_scroll = QScrollArea(); opt_scroll.setWidget(opt); opt_scroll.setWidgetResizable(True)
+        opt_scroll.setFrameShape(QScrollArea.NoFrame); opt_scroll.setMaximumHeight(300); opt_scroll.setMinimumHeight(200)
+        lv.addWidget(inp, 5); lv.addWidget(opt_scroll, 2); lv.addLayout(btns); lv.addWidget(QLabel('Log')); lv.addWidget(self.logbox, 1)
 
         # results
         self.tabs = QTabWidget()
@@ -1027,7 +1039,7 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.views['summary'], 'Cell ROIs')
 
         split = QSplitter(); split.addWidget(left); split.addWidget(self.tabs)
-        split.setStretchFactor(0, 0); split.setStretchFactor(1, 1); split.setSizes([620, 880])
+        split.setStretchFactor(0, 0); split.setStretchFactor(1, 1); split.setSizes([700, 800])
         self.analysis = AnalysisTab()
         top = QTabWidget()
         top.addTab(split, 'Run'); top.addTab(self.analysis, 'Analysis (all samples)')
