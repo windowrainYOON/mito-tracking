@@ -101,7 +101,8 @@ class JobTable(QTableWidget):
 
     def add_set(self, s, preset):
         r = self.rowCount(); self.insertRow(r)
-        texts = (os.path.basename(os.path.dirname(s['red'])), preset, pipeline.sample_name(s['red']))
+        texts = (s.get('dataset') or os.path.basename(os.path.dirname(s['red'])), preset,
+                 s.get('name') or pipeline.sample_name(s['red']))
         for c, t in enumerate(texts):
             self.setItem(r, c, QTableWidgetItem(t))
         for k, c in self.CH_COL.items():
@@ -306,7 +307,7 @@ class CorrelationTab(QWidget):
         self.sc_fig = Figure(figsize=(6, 4)); self.scatter = FigureCanvasQTAgg(self.sc_fig)
         self.heat.mpl_connect('button_press_event', self.on_heat_click)
         self.heat.mpl_connect('motion_notify_event', self.on_heat_hover)
-        self.vals = None
+        self.vals = None; self.reasons = {}
         self.stat = QLabel(); self.stat.setTextInteractionFlags(Qt.TextSelectableByMouse); self.stat.setWordWrap(True)
         split = QSplitter(Qt.Horizontal); split.addWidget(self.heat); split.addWidget(self.scatter)
         split.setSizes([500, 600])
@@ -396,15 +397,26 @@ class CorrelationTab(QWidget):
         ax.set_xticks(range(len(xs)), [l for _, l in xs], rotation=60, ha='right', fontsize=7)
         ax.set_yticks(range(len(ys)), [l for _, l in ys], fontsize=7)
         self.vals = vals
+        self.reasons = {}
+        for j, (xk, xl) in enumerate(xs):
+            for i, (yk, yl) in enumerate(ys):
+                if not np.isfinite(vals[i, j]):
+                    self.reasons[i, j] = stats.why_nan(self.values(rows, xk, self.logx), self.values(rows, yk, self.logy),
+                                                       xl, yl)
         for i in range(vals.shape[0]):
             for j in range(vals.shape[1]):
                 if np.isfinite(vals[i, j]) and vals.size <= 100:  # numbers only where they fit; hover shows the rest
                     ax.text(j, i, f'{vals[i, j]:.2f}', ha='center', va='center', fontsize=6,
                             color='white' if abs(vals[i, j]) > 0.6 else 'black')
+                elif not np.isfinite(vals[i, j]) and vals.size <= 400:
+                    ax.text(j, i, '–', ha='center', va='center', fontsize=6, color='#999999')
         f.colorbar(im, ax=ax, fraction=0.04, label=name)
         unit = 'cells' if self.level.currentData() == 'cell' else 'mito objects'
-        ax.set_title(f'{name}, n = {len(rows)} {unit}' + (' (too few for a reliable value)' if len(rows) < 8 else '')
-                     + '\nclick a square to plot it', fontsize=9)
+        if len(rows) < 3:
+            note = f'\nnot computable: at least 3 {unit} are needed (filter fewer groups or add images)'
+        else:
+            note = (' (too few for a reliable value)' if len(rows) < 8 else '') + '\nclick a square to plot it; – = not computable'
+        ax.set_title(f'{name}, n = {len(rows)} {unit}' + note, fontsize=9)
         f.tight_layout(); self.heat.draw_idle()
 
     def on_heat_hover(self, ev):
@@ -412,8 +424,10 @@ class CorrelationTab(QWidget):
             return
         j, i = int(round(ev.xdata)), int(round(ev.ydata))
         if 0 <= i < self.vals.shape[0] and 0 <= j < self.vals.shape[1]:
-            self.heat.setToolTip(f'{self.y.itemText(i)} vs {self.x.itemText(j)}: {self.hstat.currentText()} = '
-                                 f'{self.vals[i, j]:.3f}')
+            v = self.vals[i, j]
+            self.heat.setToolTip(f'{self.y.itemText(i)} vs {self.x.itemText(j)}: ' + (
+                f'{self.hstat.currentText()} = {v:.3f}' if np.isfinite(v) else
+                f'not computable ({self.reasons.get((i, j), "")})'))
 
     def on_heat_click(self, ev):
         if ev.xdata is None or ev.ydata is None:
@@ -488,6 +502,16 @@ class CorrelationTab(QWidget):
         if not many and key:
             ax.legend(fontsize=7, frameon=False, ncol=2, loc='upper center')
         ax.spines[['top', 'right']].set_visible(False)
+        why = stats.why_nan(x, y, self.x.currentText(), self.y.currentText())
+        if why:
+            unit = 'cells' if self.level.currentData() == 'cell' else 'mito objects'
+            ax.set_title(f'regression not computable: {why.replace("values", unit)}', fontsize=9, color='#B03A2E')
+            f.tight_layout(); self.scatter.draw_idle()
+            self.stat.setText(f'No regression / correlation for {yl} vs {xl}: {why.replace("values", unit)}. '
+                              + ('Cell-level statistics need at least 3 cells in the current selection; choose '
+                                 '"All" cells or a wider dataset filter, or analyse more images of this dataset.'
+                                 if reg['n'] < 3 else 'A metric that does not vary has no correlation.'))
+            return
         ax.set_title(f"r = {reg['r']:.3f}, R² = {reg['r2']:.3f}, p = {reg['p']:.2g}, n = {reg['n']}"
                      f"   (Spearman ρ = {rho:.3f})", fontsize=9)
         f.tight_layout(); self.scatter.draw_idle()

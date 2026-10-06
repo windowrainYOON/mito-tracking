@@ -50,6 +50,18 @@ def numeric(rows, key):
     return np.array(out)
 
 
+def why_nan(x, y, xl='X', yl='Y'):
+    """Why a regression / correlation of x and y is undefined ('' if it is defined)."""
+    ok = np.isfinite(x) & np.isfinite(y)
+    n = int(ok.sum())
+    if n < 3:
+        return f'n = {n}: at least 3 values are needed'
+    for v, l in ((x, xl), (y, yl)):
+        if np.ptp(v[ok]) == 0:
+            return f'{l} is the same ({v[ok][0]:.4g}) for all {n} values'
+    return ''
+
+
 def spearman(x, y):
     ok = np.isfinite(x) & np.isfinite(y)
     n = int(ok.sum())
@@ -76,7 +88,7 @@ def pair_stats(x, y):
     reg = regression(x, y)
     rho, p_s, _ = spearman(x, y)
     return dict(pearson_r=reg['r'], r2=reg['r2'], slope=reg['slope'], intercept=reg['intercept'], p_value=reg['p'],
-                spearman_rho=rho, spearman_p=p_s, n=reg['n'])
+                spearman_rho=rho, spearman_p=p_s, n=reg['n'], note=why_nan(x, y))
 
 
 def correlation_table(cell_rows, mito_rows):

@@ -32,15 +32,21 @@ class Params:
 
 
 def sample_name(red_path):
-    """'Processed_New01_Ch1_Red.tif' -> 'Processed_New01'."""
+    """'Processed_New01_Ch1_Red.tif' -> 'Processed_New01'; 'X_Ch1_Red_Cropped_ROI1.tif' -> 'X_Cropped_ROI1'."""
     stem = os.path.splitext(os.path.basename(red_path))[0]
-    return re.sub(r'[_\- ]*(ch\d+)?[_\- ]*(red|mito)$', '', stem, flags=re.I) or stem
+    out = re.sub(r'[_\- ]*(ch\d+)?[_\- ]*(red|mito)$', '', stem, flags=re.I)
+    if out == stem:  # channel tag in the middle of the name
+        out = re.sub(r'(^|[_\- ]+)(ch\d+[_\- ]*)?red(?=[_\- ])', '', stem, count=1, flags=re.I)
+    return out.strip('_- ') or stem
+
+
+CHANNEL_RX = re.compile(r'(ch\d+[_\- ]*)?(red|green|blue)', re.I)
 
 
 def find_siblings(path):
     """Guess the other two channel files from one file name (…Ch1_Red / …Ch2_Green / …Ch3_Blue)."""
     d, name = os.path.split(path)
-    m = re.search(r'(ch\d+[_\- ]*)?(red|green|blue)', name, re.I)
+    m = CHANNEL_RX.search(name)
     if not m:
         return {}
     files = os.listdir(d or '.')
@@ -54,24 +60,44 @@ def find_siblings(path):
 
 
 def find_sets(paths):
-    """Group TIFF files (or the TIFFs inside folders) into red/green/blue image sets by file name.
+    """Group TIFF files (or the TIFFs inside folders, searched recursively) into red/green/blue image sets
+    by file name.
 
-    Returns (sets, leftover): sets is a list of {'red', 'green', 'blue'} dicts in name order,
-    leftover the files that could not be placed in a complete set."""
-    files = []
+    Returns (sets, leftover): sets is a list of {'red', 'green', 'blue', 'dataset', 'name'} dicts in name order,
+    where dataset is the name of the folder that was added (or the file's own folder for single files);
+    leftover the channel files (names with red/green/blue) that could not be placed in a complete set."""
+    files = {}  # path -> (dataset, folder the dataset name comes from)
     for p in paths:
+        p = os.path.abspath(p)
         if os.path.isdir(p):
-            files += [os.path.join(p, f) for f in sorted(os.listdir(p))
-                      if f.lower().endswith(('.tif', '.tiff')) and not f.startswith('.')]
+            ds = os.path.basename(p.rstrip(os.sep))
+            for d, dirs, fs in os.walk(p):
+                dirs[:] = sorted(x for x in dirs if not x.startswith('.'))
+                for f in sorted(fs):
+                    if f.lower().endswith(('.tif', '.tiff')) and not f.startswith('.'):
+                        files.setdefault(os.path.join(d, f), (ds, p))
         elif os.path.isfile(p):
-            files.append(p)
+            files.setdefault(p, (os.path.basename(os.path.dirname(p)), os.path.dirname(p)))
     sets, used = {}, set()
-    for f in files:
+    for f, (ds, root) in files.items():
         s = find_siblings(f)
         if len(s) == 3:
-            sets[s['red']] = s
             used.update(s.values())
-    leftover = [f for f in files if f not in used]
+            sets[s['red']] = dict(s, dataset=ds, name=sample_name(s['red']), _root=root)
+    # the same file name in several subfolders of one dataset: prefix the subfolder so output folders differ
+    seen = {}
+    for s in sets.values():
+        seen.setdefault((s['dataset'], s['name']), []).append(s)
+    for group in seen.values():
+        if len(group) > 1:
+            for s in group:
+                sub = os.path.relpath(os.path.dirname(s['red']), s['_root'])
+                if sub != '.':
+                    s['name'] = f"{sub.replace(os.sep, '_')}_{s['name']}"
+    for s in sets.values():
+        del s['_root']
+    # Merged / labels / binary TIFFs etc. are not channel files and are not reported
+    leftover = [f for f in files if f not in used and CHANNEL_RX.search(os.path.basename(f))]
     return [sets[k] for k in sorted(sets)], leftover
 
 

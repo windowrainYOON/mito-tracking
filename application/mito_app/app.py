@@ -3,8 +3,8 @@
     python -m mito_app --cli RED.tif GREEN.tif BLUE.tif -o OUTDIR [--exclude-binucleate] [--include-edge-cells]
     python -m mito_app --cli --batch FOLDER_OR_TIFF [...] -o OUTDIR [--dataset NAME] [--preset NAME]
 
-Batch mode groups the TIFFs into red/green/blue sets by file name and writes each set to
-OUTDIR/<dataset>/<preset>-<dataset>/<sample>/ (dataset defaults to the images' folder name,
+Batch mode groups the TIFFs (folders are searched recursively) into red/green/blue sets by file name and writes each set to
+OUTDIR/<dataset>/<preset>-<dataset>/<sample>/ (dataset defaults to the name of the folder given,
 preset to the mito method).
 """
 import argparse, os, sys, warnings
@@ -47,8 +47,8 @@ def cli(argv):
         print(f'skipped (no complete red/green/blue set): {f}')
     results, failed = [], 0
     for n, s in enumerate(sets, 1):
-        name = pipeline.sample_name(s['red'])
-        dataset = A.dataset or os.path.basename(os.path.dirname(os.path.abspath(s['red'])))
+        name = s['name']
+        dataset = A.dataset or s['dataset']
         out = pipeline.job_outdir(A.outdir, dataset, A.preset or A.mito_method, name)
         print(f'[{n}/{len(sets)}] {name} -> {out}')
         try:
