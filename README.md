@@ -3,6 +3,7 @@
 **Mito Analyzer**: a desktop app that measures, for each cell, mitochondrial morphology (MiNA) and how much of a protein of interest (green) sits on the mitochondria, then looks at how the two relate. The code is in [`application/`](application/), with the full description in [`application/README.md`](application/README.md).
 
 📄 **Step-by-step algorithm explanation with an example image (PDF):** [`application/docs/Mito_Analyzer_algorithm.pdf`](application/docs/Mito_Analyzer_algorithm.pdf)
+📘 **알고리즘 상세 설명 (세포 ROI 설정 포함):** [`application/docs/algorithm.md`](application/docs/algorithm.md) · **지표 설명:** [`application/docs/metrics.md`](application/docs/metrics.md)
 
 ## 설치 방법
 
@@ -51,5 +52,9 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
    - *Analysis* 탭에서 결과 폴더 전체를 모아 통합 분석할 수 있습니다.
    - **그룹 비교**: 입력 표의 *Group* 열(기본값 = dataset)이나 *Set group…* 버튼으로 이미지셋을 그룹으로 묶습니다. *Analysis* 탭의 *Groups: correlation* 은 두 그룹의 상관 heat map과 그 차이(B − A, Fisher z 검정 * p < 0.05) heat map을, *Groups: mean / median* 은 지표마다 평균·중앙값과 에러바(SD / SEM / 95 % CI / IQR), 그룹 간 검정(두 그룹: Welch t·Mann-Whitney, 그 이상: ANOVA·Kruskal-Wallis) 표를 보여줍니다. 세포 단위나 이미지 단위(이미지별 평균)로 비교할 수 있습니다. 그룹은 결과 폴더의 `groups.csv` 에 저장되고 *Groups…* 버튼으로 나중에 바꿀 수 있습니다.
    - 출력 폴더를 비워두면 입력 폴더들의 공통 상위 폴더 안 `dataset` 폴더에 저장합니다.
+   - **그룹별 출력**: 배치가 끝나면 `<출력>/groups/<그룹>/` 에 그룹마다 세포·미토·이미지 평균·상관 표가, `groups/group_comparison.xlsx` 에 지표 × 그룹 비교표(대조군 대비 Holm 보정 검정 포함)가 저장됩니다. *Analysis* 탭의 *Export by group…* 으로 다시 만들 수 있습니다.
+   - **여러 그룹 분석**: 대조군 선택(각 그룹 vs 대조군), 보여줄 그룹 선택, 모든 그룹 상관 히트맵 + Cochran's Q 검정.
+6. **픽셀 크기**: TIFF의 OME / ImageJ unit / ResolutionUnit 정보에서 µm/px를 읽습니다. 없으면 표에 빨간 `?`로 표시되고, Run all 때 값을 물어봅니다 (칸을 더블클릭해 직접 입력 가능).
+7. **임계값 수동 조정**: Options → *Thresholds* 에서 핵, 세포 영역, 미토콘드리아, 밝은 green, puncta 임계값을 자동 또는 수동(모든 이미지 일괄)으로 정합니다. *Preview / adjust thresholds…* 에서 슬라이더를 움직이며 마스크를 바로 보고, 모든 이미지 또는 그 이미지에만 적용할 수 있습니다.
 
 설명 PDF 는 `cd application && .venv/bin/python tools/make_algorithm_pdf.py RED.tif GREEN.tif BLUE.tif -o docs/Mito_Analyzer_algorithm.pdf` 로 현재 코드 기준으로 다시 만들 수 있습니다.

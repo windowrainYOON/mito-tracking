@@ -16,11 +16,12 @@ from skimage import filters, morphology, segmentation
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import matplotlib  # noqa: E402
+import matplotlib.patches  # noqa: E402,F401
 matplotlib.use('Agg')
 from matplotlib import font_manager, pyplot as plt  # noqa: E402
 from matplotlib.backends.backend_pdf import PdfPages  # noqa: E402
 
-from mito_app import __version__, cell_roi, green as green_q, green_cells, mina, mito_objects, nuclei, pipeline, stats  # noqa: E402
+from mito_app import __version__, cell_roi, green as green_q, green_cells, mina, mito_objects, nuclei, pipeline, stats, thresholds  # noqa: E402
 
 KO_FONTS = ('AppleGothic', 'Apple SD Gothic Neo', 'Malgun Gothic', 'NanumGothic', 'Noto Sans CJK KR',
             'WenQuanYi Zen Hei')
@@ -30,7 +31,8 @@ def set_font():
     have = {f.name for f in font_manager.fontManager.ttflist}
     for f in KO_FONTS:
         if f in have:
-            plt.rcParams['font.family'] = f
+            # DejaVu Sans as fallback for glyphs the Korean font lacks (µ, σ, ≥ ...)
+            plt.rcParams['font.family'] = [f, 'DejaVu Sans']
             break
     plt.rcParams['axes.unicode_minus'] = False
 
@@ -96,7 +98,8 @@ def main(argv=None):
 
     # ---- recompute intermediates with the pipeline's own functions ----
     a, g, px = cell_roi.load_green(A.green)
-    px = px if px != 1.0 else cell_roi.REF_PX_UM
+    px_src = cell_roi.read_pixel_size(A.green)[1] if px else 'none (0.099 µm assumed)'
+    px = px or cell_roi.REF_PX_UM
     k = float(np.clip(cell_roi.REF_PX_UM / px, 0.2, 5))
     nuc_img, _ = cell_roi.load_nuclei(A.blue, k)
     nuc0, dim, ninfo = nuclei.detect(nuc_img, k, pipeline.Params().nuclei_method)
@@ -153,6 +156,35 @@ def main(argv=None):
              [('Red: 미토콘드리아', rgb(R, R * 0.55)), ('Green: 관심 단백질', rgb(None, Gc)),
               ('Blue: 핵', rgb(None, None, B)), ('Merge', rgb(R, Gc, B))])
 
+        # 0b. pixel size
+        def px_panel(ax):
+            ax.set_axis_off()
+            rows_ = [('OME-TIFF', 'PhysicalSizeX (+ 단위)'), ('ImageJ TIFF', 'XResolution + ImageJ unit (micron, nm, mm …)'),
+                     ('일반 TIFF', 'XResolution + ResolutionUnit (cm / inch)'),
+                     ('없음 / 이상한 값', '"?" 표시 → Run all 때 µm/px 입력 창'),
+                     ('이 이미지', f'{px:.5f} µm/px ({px_src})')]
+            for i, (k_, v_) in enumerate(rows_):
+                ax.text(0.02, 0.9 - i * 0.17, k_, fontsize=10, weight='bold', transform=ax.transAxes)
+                ax.text(0.34, 0.9 - i * 0.17, v_, fontsize=10, transform=ax.transAxes)
+        page(pdf, '0-1단계 — 픽셀 크기 (픽셀 → µm)',
+             '모든 길이·넓이 지표(µm, µm²)와 크기 상수는 픽셀 크기로 바꿉니다.\n\n'
+             '읽는 순서\n'
+             '  1. OME-XML의 PhysicalSizeX (단위 포함)\n'
+             '  2. ImageJ가 저장한 unit= (micron, nm, mm, cm, inch) + XResolution\n'
+             '  3. TIFF ResolutionUnit (cm / inch) + XResolution\n'
+             '  4. 0.005–10 µm/px 밖의 값(예: 72 dpi 화면 해상도)은 "없음"으로 봄\n\n'
+             '없을 때\n'
+             '  - 이미지 세트 표의 µm/px 칸에 빨간 "?"가 표시됩니다.\n'
+             '  - Run all을 누르면 그 세트들의 µm/px를 한 번 물어봅니다\n'
+             '    (현미경 획득 설정 값을 입력). 칸을 더블클릭해 직접 바꿀 수도 있습니다.\n'
+             '  - Options의 Pixel size에 값을 넣으면 모든 이미지에 그 값을 씁니다.\n'
+             '  - 명령줄: --pixel-size-um (없으면 0.099 µm로 계산하고 경고)\n\n'
+             '기록: settings 시트의 pixel_size_um과 pixel_size_source\n'
+             '(TIFF / entered / assumed).\n\n'
+             '크기 상수는 기준 픽셀 0.099 µm에서 정했고, 비율 k = 0.099 / 픽셀\n'
+             '크기로 함께 조정됩니다 (σ, 창 크기, 최소 넓이 등).',
+             [('', px_panel)], cols=1)
+
         # 1. auto-levels
         sm4 = ndi.gaussian_filter(g, 4 * k)
 
@@ -175,6 +207,43 @@ def main(argv=None):
              '(1단계의 비용 지도).',
              [('원본 green (표시용 자동 대비)', Gc, 'gray'), ('보정된 green', np.clip(gn / 20, 0, 1), 'gray'),
               ('밝기 분포와 기준점', hist)])
+
+        # 1-0. ROI overview
+        def flow_panel(ax):
+            ax.set_axis_off()
+            steps = [('1-1', '핵 찾기', 'blue: 무늬(texture) 있는 핵만, 초점 / 흐린 핵'),
+                     ('1-2', '세포 영역 + 경계선', 'red 밀도(3 µm) ≥ 0.12 × p99 = 세포 영역\n미토가 끊어지는 선(Sato) = 경계 후보'),
+                     ('1-3', 'compact watershed', '모든 핵에서 동시에, 비용 = (1 − 밀도) + 선 + green 골짜기'),
+                     ('1-4', '다듬기', '열림 연산, 구멍 채우기, 가장 큰 조각만 (핵은 유지)'),
+                     ('1-5', '가장자리 끝 잘라내기', '핵은 안쪽, 끝만 닿으면 끊어지는 선에서 자름'),
+                     ('QC', '분석 대상', '가장자리에 닿음 → edge, (옵션) 약한 경계 → binucleate')]
+            for i, (n_, t_, d_) in enumerate(steps):
+                y = 0.93 - i * 0.158
+                ax.add_patch(matplotlib.patches.FancyBboxPatch((0.02, y - 0.1), 0.96, 0.12, boxstyle='round,pad=0.01',
+                                                               fc='#eef3fb', ec='#6b8cc7', transform=ax.transAxes))
+                ax.text(0.04, y - 0.04, n_, fontsize=11, weight='bold', transform=ax.transAxes, va='center')
+                ax.text(0.13, y - 0.01, t_, fontsize=10, weight='bold', transform=ax.transAxes, va='center')
+                ax.text(0.13, y - 0.065, d_, fontsize=8, transform=ax.transAxes, va='center')
+        page(pdf, '1단계 개요 — 세포 ROI는 이렇게 정합니다',
+             '목표: 세포 하나 = 핵 하나 + 그 핵을 둘러싼 세포질(미토콘드리아).\n'
+             '세포막 염색이 없으므로 세 가지 단서를 씁니다.\n\n'
+             '  1. 핵 (blue): 세포마다 하나, 세포의 중심이자 씨앗\n'
+             '  2. 미토콘드리아 (red): 세포질을 채우고, 세포와 세포 사이에서는\n'
+             '     가는 "미토가 없는 선"이 생깁니다 → 경계\n'
+             '  3. green 자가형광: 약하지만 세포 사이 골짜기를 보여줌 → 보조 경계\n\n'
+             '흐름 (오른쪽 그림)\n'
+             '  1-1 핵 찾기 → 1-2 세포 영역과 경계 후보 → 1-3 핵에서 동시에\n'
+             '  퍼지는 compact watershed → 1-4 다듬기 → 1-5 가장자리 끝 잘라내기\n'
+             '  → QC (가장자리 세포 제외)\n\n'
+             '왜 compact watershed인가\n'
+             '  - 보통 watershed는 비용이 낮은 길을 따라 한 세포가 길게 뻗을 수\n'
+             '    있습니다. compactness는 핵에서 멀어질수록 비용을 조금씩 더해,\n'
+             '    경계 단서가 약한 곳에서는 두 핵의 중간쯤에서 만나게 합니다.\n'
+             '  - 경계 단서(끊어지는 선)가 강한 곳에서는 그 선이 이깁니다.\n\n'
+             '수동 조정: 세포 영역 기준(0.12)과 핵 기준값은 Options → Thresholds\n'
+             '에서 바꾸고 미리보기로 확인할 수 있습니다 (6단계).\n'
+             '자세한 설명: docs/algorithm.md',
+             [('', flow_panel)], cols=1)
 
         # 2. nuclei
         nimg = rgb(B * 0.3, B * 0.3, B)
@@ -382,6 +451,64 @@ def main(argv=None):
              '참고: 조각 단위 점들은 같은 세포 안에서 서로 독립이 아니므로\n'
              'p 값은 세포 단위 결과와 함께 해석하는 것이 안전합니다.',
              [('', scatter)], cols=1)
+
+        # 6. manual thresholds
+        P = thresholds.Preview(A.red, A.green, A.blue, px, pipeline.Params().nuclei_method)
+        th_panels = []
+        for key, label, unit, img_txt, auto_txt in pipeline.THRESHOLDS:
+            im_, t_ = P.image(key)
+            base = P.display(key); m_ = P.mask(key, 0)
+            col = {'thr_nuclei': (0.2, 0.5, 1), 'cell_fg_level': (1, 0.8, 0.2), 'thr_mito': (1, 0.25, 0.8),
+                   'thr_green_bright': (0.2, 1, 0.3), 'thr_puncta': (1, 1, 0.1)}[key]
+            v_ = rgb(base, base, base); v_[m_] = v_[m_] * 0.45 + np.array(col) * 0.55
+            th_panels.append((f'{label}: auto {t_:.3g}', v_))
+        page(pdf, '6단계 — 임계값 수동 조정과 미리보기',
+             '각 단계의 임계값은 기본적으로 이미지마다 자동으로 정해집니다.\n'
+             'Options → Thresholds에서 "Manual"을 켜면 그 값 하나를 배치의\n'
+             '모든 이미지에 똑같이 적용합니다.\n\n'
+             '조정할 수 있는 임계값 (괄호: 적용되는 이미지 / 자동 값)\n'
+             '  - Nuclei: 배경 제거한 blue / 0.5 × Otsu (Otsu 방식이면 Otsu)\n'
+             '  - Cell area: 미토 밀도 ÷ p99 / 0.12 (세포 영역 기준)\n'
+             '  - Mitochondria: 전처리한 red (rolling ball 1.5 µm, σ 0.7 px) /\n'
+             '    세포마다 국소 평균 AND 0.5 × Otsu. 수동이면 세포 안에서 이 값\n'
+             '    하나로 자르고, 이후 조각 나누기는 그대로\n'
+             '  - Green+ (밝은 green): 보정 green / Otsu 두 번 (≥ 세포질 3배)\n'
+             '  - Green puncta: green top-hat / max(Otsu, 중앙값 + 6 MAD)\n\n'
+             '미리보기 (Preview / adjust thresholds…)\n'
+             '  - 이미지 세트와 임계값을 고르고 슬라이더로 바꾸면 마스크가 바로\n'
+             '    다시 그려집니다 (확대·이동 가능). 그 이미지의 자동 값도 표시.\n'
+             '  - "Apply to all images": Options의 수동 값으로 설정\n'
+             '  - "This image only": 그 이미지에만 적용 (표의 Thresholds 칸)\n\n'
+             '기록: settings 시트에 사용한 값과 자동 값(nuclei_threshold_auto 등).\n'
+             '오른쪽: 이 이미지의 자동 임계값으로 만든 마스크.',
+             th_panels, cols=3)
+
+        # 7. groups
+        page(pdf, '7단계 — 그룹별 출력과 여러 그룹 분석',
+             '그룹: 이미지 세트 표의 Group 열 (기본 = dataset). groups.csv에 저장되고,\n'
+             'Analysis 탭의 Groups… 에서 바꿀 수 있습니다.\n\n'
+             '그룹별 출력 (배치가 끝나면 자동, 또는 Analysis → Export by group…)\n'
+             '  <출력>/groups/<그룹>/\n'
+             '    <그룹>_cells.csv, _mito.csv, _cells_green_pos/neg.csv …\n'
+             '    <그룹>_per_image.csv (이미지당 평균), _correlations.csv,\n'
+             '    <그룹>_results.xlsx (위 표 전부)\n'
+             '  <출력>/groups/group_comparison.xlsx\n'
+             '    지표 × 그룹마다 n, 평균, SD, SEM, 95 % CI, 중앙값, IQR,\n'
+             '    전체 그룹 검정, 대조군 대비 검정 (Holm 보정);\n'
+             '    전체 / green+ / green-, 세포 / 이미지 / 미토 조각 단위\n'
+             '  <출력>/groups/groups_overview.csv (그룹별 이미지·세포 수)\n\n'
+             '여러 그룹 분석 (Analysis 탭)\n'
+             '  - Groups: mean / median: 대조군(Control)을 고르면 각 그룹을\n'
+             '    대조군과 비교 (Welch, Mann-Whitney, Holm 보정, 그림에 별표).\n'
+             '    Groups shown으로 보여줄 그룹 선택, 그룹이 많으면 이름을 기울임.\n'
+             '    표는 한 줄 = 지표 × 그룹 (긴 형식)이라 그룹이 많아도 읽기 쉬움.\n'
+             '  - Groups: correlation: A vs B (◀ ▶로 B를 차례로 바꿈, Fisher z)\n'
+             '    또는 All groups (그룹마다 히트맵 + 모든 그룹에서 상관이 같은지\n'
+             "    보는 Cochran's Q 검정 지도).\n"
+             '  - 그룹별 상관 행렬은 한 번 계산하면 다시 쓰므로 빠르게 바뀝니다.\n\n'
+             '주의: 많은 지표·칸을 동시에 검정하면 5 % 정도는 우연히 p < 0.05가\n'
+             '됩니다. 이미지 단위(Unit = images)에서도 유지되는지 확인하세요.',
+             [('', lambda ax: ax.set_axis_off())], cols=1)
     print(f'Wrote {A.out}')
 
 

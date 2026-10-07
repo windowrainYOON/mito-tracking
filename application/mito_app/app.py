@@ -5,7 +5,12 @@
 
 Batch mode groups the TIFFs (folders are searched recursively) into red/green/blue sets by file name and writes each set to
 OUTDIR/<dataset>/<preset>-<dataset>/<sample>/ (dataset defaults to the name of the folder given,
-preset to the mito method). The group of each set (default: its dataset) goes to OUTDIR/groups.csv.
+preset to the mito method). The group of each set (default: its dataset) goes to OUTDIR/groups.csv, and the
+group-wise export (one folder per group + group_comparison.xlsx) to OUTDIR/groups/.
+
+Thresholds are automatic per image unless a manual value is given (one value for every image):
+    --thr-nuclei, --cell-fg-level, --thr-mito, --thr-green-bright, --thr-puncta
+Images without a pixel size in the TIFF use --pixel-size-um (or, if 0, the 0.099 um reference, with a warning).
 """
 import argparse, os, sys, warnings
 
@@ -37,10 +42,26 @@ def cli(argv):
                     help='nucleus detection (see mito_app/nuclei.py)')
     ap.add_argument('--green-pos-percent', type=float, default=2.0,
                     help='green-positive cell: bright green covers at least this %% of the cytoplasm')
+    ap.add_argument('--thr-nuclei', type=float, default=0.0,
+                    help='manual nucleus threshold on the flattened (texture) / smoothed (otsu) blue; 0 = auto')
+    ap.add_argument('--cell-fg-level', type=float, default=0.12,
+                    help='cell area: mito density (red at 3 um / its 99th percentile) above this level')
+    ap.add_argument('--thr-mito', type=float, default=0.0,
+                    help='manual mito threshold on the preprocessed red (rolling ball 1.5 um, sigma 0.7 px); 0 = auto')
+    ap.add_argument('--thr-green-bright', type=float, default=0.0,
+                    help='manual bright-green threshold for green+ cells (auto-levelled green); 0 = auto')
+    ap.add_argument('--thr-puncta', type=float, default=0.0,
+                    help='manual green puncta threshold (top-hat units); 0 = auto')
+    ap.add_argument('--control', help='control group for the group comparison export (each group vs control)')
+    ap.add_argument('--no-group-export', action='store_true', help='do not write OUTDIR/groups/')
     A = ap.parse_args(argv)
-    p = pipeline.Params(A.min_area_um2, A.binuc_tau, A.exclude_binucleate, A.include_edge_cells,
-                        A.pixel_size_um, A.puncta_sensitivity, A.min_mito_area_um2, A.mito_method,
-                        A.green_pos_percent, not A.no_dim_nuclei, not A.no_edge_trim, A.nuclei_method)
+    p = pipeline.Params(min_area_um2=A.min_area_um2, binuc_tau=A.binuc_tau, exclude_binucleate=A.exclude_binucleate,
+                        include_edge_cells=A.include_edge_cells, pixel_size_um=A.pixel_size_um,
+                        puncta_sensitivity=A.puncta_sensitivity, min_mito_area_um2=A.min_mito_area_um2,
+                        mito_method=A.mito_method, green_pos_percent=A.green_pos_percent,
+                        dim_nuclei=not A.no_dim_nuclei, trim_edge_cells=not A.no_edge_trim,
+                        nuclei_method=A.nuclei_method, thr_nuclei=A.thr_nuclei, cell_fg_level=A.cell_fg_level,
+                        thr_mito=A.thr_mito, thr_green_bright=A.thr_green_bright, thr_puncta=A.thr_puncta)
     if not A.batch:
         if len(A.inputs) != 3:
             ap.error('give RED GREEN BLUE, or use --batch')
@@ -49,6 +70,12 @@ def cli(argv):
     sets, leftover = pipeline.find_sets(A.inputs)
     for f in leftover:
         print(f'skipped (no complete red/green/blue set): {f}')
+    if not A.pixel_size_um:
+        nopx = [s['name'] for s in sets if not pipeline.cell_roi.read_pixel_size(s['green'])[0]]
+        if nopx:
+            print(f'WARNING: {len(nopx)} image set(s) have no pixel size in the TIFF ({", ".join(nopx[:5])}'
+                  f'{" …" if len(nopx) > 5 else ""}); they use {pipeline.cell_roi.REF_PX_UM} um/px. '
+                  'Give --pixel-size-um if that is wrong.')
     results, failed = [], 0
     entries = [dict(outdir=pipeline.job_outdir(A.outdir, A.dataset or s['dataset'], A.preset or A.mito_method, s['name']),
                     dataset=A.dataset or s['dataset'], sample=s['name'], group=A.group or A.dataset or s['dataset'])
@@ -65,6 +92,8 @@ def cli(argv):
             failed += 1
             print(f'     FAILED: {type(e).__name__}: {e}')
     pipeline.write_group_tables(results)
+    if results and not A.no_group_export:
+        pipeline.write_group_exports(A.outdir, control=A.control)
     print(f'{len(results)} done, {failed} failed')
     return 1 if failed or not sets else 0
 

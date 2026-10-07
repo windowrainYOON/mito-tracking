@@ -22,15 +22,28 @@ from .mina import analyze_skeleton
 NAN = float('nan')
 
 
-def detect_puncta(green, cell_mask, k=1.0, sensitivity=1.0):
-    """Label green puncta inside `cell_mask`. Returns (labels, threshold, tophat image)."""
+def tophat(green, k=1.0):
+    """Background-subtracted green, smoothed (sigma 1 px) and white-top-hat filtered (disk 8 px): the image the
+    puncta threshold is applied to."""
     sm = ndi.gaussian_filter(green, 1.0 * k)
-    th = morphology.white_tophat(sm, morphology.disk(max(2, round(8 * k))))
+    return morphology.white_tophat(sm, morphology.disk(max(2, round(8 * k))))
+
+
+def auto_puncta_threshold(th, cell_mask, sensitivity=1.0):
     v = th[cell_mask]
     if v.size == 0 or v.max() <= v.min():
-        return np.zeros(green.shape, int), NAN, th
+        return NAN
     med = np.median(v)
-    t = max(filters.threshold_otsu(v), med + 6 * 1.4826 * np.median(np.abs(v - med))) * sensitivity
+    return float(max(filters.threshold_otsu(v), med + 6 * 1.4826 * np.median(np.abs(v - med))) * sensitivity)
+
+
+def detect_puncta(green, cell_mask, k=1.0, sensitivity=1.0, thr=0.0):
+    """Label green puncta inside `cell_mask` (`thr` > 0: manual top-hat threshold, sensitivity not used).
+    Returns (labels, threshold, tophat image)."""
+    th = tophat(green, k)
+    t = thr if thr > 0 else auto_puncta_threshold(th, cell_mask, sensitivity)
+    if not np.isfinite(t):
+        return np.zeros(green.shape, int), NAN, th
     m = morphology.remove_small_objects((th > t) & cell_mask, max_size=max(1, round(3 * k * k)))
     return measure.label(m, connectivity=2), float(t), th
 
@@ -39,14 +52,16 @@ def _safe_div(a, b):
     return a / b if b else NAN
 
 
-def quantify(green, red, lab, mito, rows, px, bg=0.0, k=1.0, sensitivity=1.0, min_mito_area_um2=0.05, log=print):
+def quantify(green, red, lab, mito, rows, px, bg=0.0, k=1.0, sensitivity=1.0, min_mito_area_um2=0.05, log=print,
+             puncta_thr=0.0):
     """Add green-on-mito columns to `rows` (in place) and return (mito_rows, puncta_rows, mito_labels, puncta_labels)."""
     g = np.clip(green.astype(float) - bg, 0, None)
     r = red.astype(float)
     cell_ids = [int(row['cell'][4:]) for row in rows]
     cells = np.isin(lab, cell_ids)
-    plab, thr, _ = detect_puncta(g, cells, k, sensitivity)
-    log(f'green puncta threshold {thr:.1f} (top-hat units), {plab.max()} puncta in analysed cells')
+    plab, thr, _ = detect_puncta(g, cells, k, sensitivity, puncta_thr)
+    log(f"green puncta threshold {thr:.1f} (top-hat units, {'manual' if puncta_thr > 0 else 'auto'}), "
+        f'{plab.max()} puncta in analysed cells')
     a_px = px * px
 
     # mito objects: connected pieces of the mito mask, never crossing a cell boundary;

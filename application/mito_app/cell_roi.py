@@ -48,7 +48,61 @@ def normalize_green(g, px_scale=1.0):
     return gn, dict(offset=float(off), gain=float(gain))
 
 
+PX_RANGE_UM = (0.005, 10.0)   # plausible microscope pixel sizes; anything else (e.g. 72 dpi) counts as missing
+UNIT_UM = {'micron': 1.0, 'microns': 1.0, 'um': 1.0, '\u00b5m': 1.0, '\u03bcm': 1.0, '\\u00b5m': 1.0,
+           'nm': 1e-3, 'nanometer': 1e-3, 'mm': 1e3, 'millimeter': 1e3, 'cm': 1e4, 'centimeter': 1e4,
+           'm': 1e6, 'meter': 1e6, 'inch': 25400.0, 'in': 25400.0}
+
+
+def read_pixel_size(path):
+    """Pixel size of a TIFF in um, or (None, reason) when the file carries no usable calibration.
+
+    Sources, in order: OME-XML PhysicalSizeX (+ unit); ImageJ 'unit=' with XResolution; TIFF ResolutionUnit
+    (cm / inch) with XResolution. A value outside PX_RANGE_UM (typical of a screen dpi such as 72 or 300)
+    is treated as missing. Returns (px_um, source)."""
+    import re as _re
+    try:
+        with tifffile.TiffFile(path) as t:
+            page = t.pages[0]
+            ome = t.ome_metadata
+            if ome:
+                m = _re.search(r'PhysicalSizeX="([0-9.eE+-]+)"', ome)
+                if m:
+                    u = _re.search(r'PhysicalSizeXUnit="([^"]+)"', ome)
+                    f = UNIT_UM.get((u.group(1) if u else 'um').strip().lower(), None)
+                    if f:
+                        v = float(m.group(1)) * f
+                        if PX_RANGE_UM[0] <= v <= PX_RANGE_UM[1]:
+                            return v, 'OME PhysicalSizeX'
+            xr = page.tags.get('XResolution')
+            if not xr or not xr.value[0]:
+                return None, 'no XResolution tag'
+            per_unit = xr.value[1] / xr.value[0]          # length units per pixel
+            ij = t.imagej_metadata or {}
+            unit = str(ij.get('unit', '')).strip().lower()
+            ru = page.tags.get('ResolutionUnit')
+            ru = int(ru.value) if ru else 1
+            if unit:
+                f = UNIT_UM.get(unit)
+                if f is None:
+                    return None, f"unknown ImageJ unit '{unit}'"
+                src = f'ImageJ unit {unit}'
+            elif ru == 3:
+                f, src = 1e4, 'ResolutionUnit cm'
+            elif ru == 2:
+                f, src = 25400.0, 'ResolutionUnit inch'
+            else:
+                return None, 'XResolution without a unit'
+            v = per_unit * f
+            if not PX_RANGE_UM[0] <= v <= PX_RANGE_UM[1]:
+                return None, f'implausible pixel size {v:.4g} um ({src}; probably a screen dpi)'
+            return v, src
+    except Exception as e:  # unreadable tags: let the caller ask
+        return None, f'cannot read tags ({type(e).__name__})'
+
+
 def load_green(path):
+    """(raw array, green channel with the scale bar removed, pixel size in um or None)."""
     a = tifffile.imread(path)
     if a.ndim == 3 and a.shape[-1] == 3:
         g = a[..., 1].astype(float)
@@ -56,16 +110,13 @@ def load_green(path):
         g[ndi.binary_dilation(overlay, iterations=2)] = 0
     else:
         g = a.astype(float)
-    with tifffile.TiffFile(path) as t:
-        xr = t.pages[0].tags.get('XResolution')
-        px_um = xr.value[1] / xr.value[0] if xr else 1.0
-    return a, g, px_um
+    return a, g, read_pixel_size(path)[0]
 
 
-def segment_nuclei(b, min_area_px=3000, k=1.0):
-    """Otsu nuclei; `k` = pixel-size scale factor (REF_PX_UM / pixel size)."""
+def segment_nuclei(b, min_area_px=3000, k=1.0, thr=0.0):
+    """Otsu nuclei (or a manual threshold `thr` on the same smoothed blue); `k` = REF_PX_UM / pixel size."""
     s = filters.gaussian(b, 2 * k, preserve_range=True)
-    m = s > filters.threshold_otsu(s)
+    m = s > (thr if thr > 0 else filters.threshold_otsu(s))
     m = ndi.binary_fill_holes(morphology.binary_opening(m, morphology.disk(max(1, round(3 * k)))))
     m = morphology.remove_small_objects(m, max_size=int(min_area_px * k * k))
     return measure.label(m)
@@ -144,13 +195,13 @@ def segment(g, sigma=10, fg_k=0.75, valley_pct=88, seed_dist=90,
                 labels=smooth_labels(lab))
 
 
-def find_dim_nuclei(nuc_img, nuclei, px, k=1.0, rel=0.4, min_frac=0.4, min_solidity=0.8):
+def find_dim_nuclei(nuc_img, nuclei, px, k=1.0, rel=0.4, min_frac=0.4, min_solidity=0.8, thr=0.0):
     """Out-of-focus nuclei: above `rel` x the in-focus Otsu level, compact, at least `min_frac` of the
     minimum in-focus nucleus area and clear of the in-focus nuclei. Returned as labels numbered after
     the in-focus ones (0 elsewhere). They give their cell a seed so its mitochondria are not handed to
     a neighbour."""
     s = filters.gaussian(nuc_img, 2 * k, preserve_range=True)
-    t = filters.threshold_otsu(s)
+    t = thr if thr > 0 else filters.threshold_otsu(s)
     m = (s > rel * t) & ~ndi.binary_dilation(nuclei > 0, iterations=max(1, round(1.5 / px)))
     m = morphology.binary_opening(m, morphology.disk(max(1, round(3 * k))))
     out = np.zeros_like(nuclei)
@@ -160,6 +211,12 @@ def find_dim_nuclei(nuc_img, nuclei, px, k=1.0, rel=0.4, min_frac=0.4, min_solid
             nxt += 1
             out[tuple(r.coords.T)] = nxt
     return out
+
+
+def cell_density(red, px):
+    """Mitochondria density for the cell foreground: red smoothed at 3 um, divided by its 99th percentile."""
+    md3 = ndi.gaussian_filter(red.astype(float), 3 / px)
+    return md3 / max(np.percentile(md3, 99), 1e-9)
 
 
 def segment_morph(red, nuclei, landscape, px, k=1.0, fg_level=0.12, compactness=0.003, mito_weight=1.0):
@@ -177,8 +234,8 @@ def segment_morph(red, nuclei, landscape, px, k=1.0, fg_level=0.12, compactness=
     md = np.clip(md / max(np.percentile(md, 99), 1e-9), 0, 1)
     ridge = filters.sato(md, sigmas=[1.5 / px, 2.5 / px], black_ridges=True)
     ridge = np.clip(ridge / max(np.percentile(ridge, 99.5), 1e-9), 0, 2)
-    md3 = ndi.gaussian_filter(r, 3 / px)
-    fg = (md3 > fg_level * max(np.percentile(md3, 99), 1e-9)) | (nuclei > 0)
+    md3 = cell_density(r, px)
+    fg = (md3 > fg_level) | (nuclei > 0)
     fg = morphology.binary_closing(fg, morphology.disk(max(1, round(2 / px))))
     fg = morphology.remove_small_holes(fg, max_size=int(200 / px / px))
     cost = mito_weight * (1 - md) + mito_weight * ridge + landscape
@@ -368,6 +425,7 @@ if __name__ == '__main__':
                     help='drop weak-border neighbours as one binucleate cell instead of splitting them')
     A = ap.parse_args()
     a, g, px = load_green(A.image)
+    px = px or REF_PX_UM
     nuc = nuc_img = None
     if A.nuclei:
         nuc_img, nuc = load_nuclei(A.nuclei)

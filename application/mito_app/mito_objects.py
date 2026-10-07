@@ -22,7 +22,7 @@ REF_RED_P99 = 141.832  # 99th pct of the preprocessed red inside analysed cells 
 
 K8 = np.ones((3, 3), bool)
 P = dict(rb_radius_um=1.5, sigma=0.7, block_um=1.1, local_offset=0.0, fg_floor=0.5,
-         hole_px=6, min_px=8, h=6.0, saddle_ratio=0.75, neck_ratio=1.0)
+         hole_px=6, min_px=8, h=6.0, saddle_ratio=0.75, neck_ratio=1.0, manual_thr=0.0)
 
 
 def scaled_params(sm, cells, k=1.0, p=None):
@@ -43,10 +43,15 @@ def preprocess(red, px_um, p):
 
 
 def foreground(sm, cell, px_um, p):
-    blk = int(round(p['block_um'] / px_um)) | 1
-    local = filters.threshold_local(sm, blk, method='mean', offset=p['local_offset'])
-    floor = p['fg_floor'] * filters.threshold_otsu(sm[cell])
-    fg = cell & (sm > local) & (sm > floor)
+    """Mito pixels of one cell: above the local mean AND above fg_floor x the cell's Otsu level, or, with a
+    manual threshold (p['manual_thr'] > 0), simply above that value of the preprocessed red."""
+    if p.get('manual_thr', 0) > 0:
+        fg = cell & (sm > p['manual_thr'])
+    else:
+        blk = int(round(p['block_um'] / px_um)) | 1
+        local = filters.threshold_local(sm, blk, method='mean', offset=p['local_offset'])
+        floor = p['fg_floor'] * filters.threshold_otsu(sm[cell])
+        fg = cell & (sm > local) & (sm > floor)
     holes = ndi.binary_fill_holes(fg) & ~fg
     hl = measure.label(holes, connectivity=1)
     small = np.bincount(hl.ravel()) <= p['hole_px']; small[0] = False

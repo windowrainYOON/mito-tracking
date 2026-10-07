@@ -143,25 +143,41 @@ METHODS = (('texture_merge', 'Texture + merge (recommended)'), ('texture', 'Text
            ('otsu', 'Global Otsu (old)'))
 
 
-def detect(b, k=1.0, method='texture_merge'):
+def threshold_image(b, k=1.0, method='texture_merge'):
+    """The image the nucleus threshold is applied to and its automatic threshold:
+    texture methods = background-flattened blue (sigma 2 px) with 0.5 x Otsu; 'otsu' = smoothed blue with Otsu."""
+    b = b.astype(float)
+    s = filters.gaussian(b, 2 * k, preserve_range=True)
+    if method != 'otsu':
+        s = flatten(s, k, px=REF_PX_UM / k)
+    if not s.any() or np.ptp(s) == 0:
+        return s, 0.0
+    t = filters.threshold_otsu(s)
+    return s, float(t if method == 'otsu' else 0.5 * t)
+
+
+def detect(b, k=1.0, method='texture_merge', thr=0.0):
     """Nuclear-stain image -> (in-focus labels, dim labels numbered after the in-focus ones, info).
 
     'texture_merge': steps 1-6 above. 'texture': without the merge step (4) and without the dim size floor,
-    so curved nuclei can come out in pieces. 'otsu': global Otsu + compact faint regions as dim nuclei."""
+    so curved nuclei can come out in pieces. 'otsu': global Otsu + compact faint regions as dim nuclei.
+    `thr` > 0 replaces the automatic candidate threshold (see threshold_image) by a manual value."""
     b = b.astype(float)
     px = REF_PX_UM / k
+    s, t_auto = threshold_image(b, k, method)
+    t = thr if thr > 0 else t_auto
     if method == 'otsu':
         from . import cell_roi
-        nuc = cell_roi.segment_nuclei(b, k=k)
+        nuc = cell_roi.segment_nuclei(b, k=k, thr=t)
         z = np.zeros(b.shape, int)
-        return nuc, cell_roi.find_dim_nuclei(b, nuc, px, k), dict(method=method, ref=0.0, regions=z, texture={},
-                                                                     rejected=z, n_rejected=0)
+        return nuc, cell_roi.find_dim_nuclei(b, nuc, px, k, thr=t), dict(
+            method=method, ref=0.0, regions=z, texture={}, rejected=z, n_rejected=0, threshold=t, threshold_auto=t_auto)
     min_area = MIN_AREA_PX * k * k
-    s = flatten(filters.gaussian(b, 2 * k, preserve_range=True), k, px=px)
     if not s.any():
         z = np.zeros(b.shape, int)
-        return z, z, dict(method=method, ref=0.0, regions=z, texture={}, rejected=z, n_rejected=0)
-    m = s > 0.5 * filters.threshold_otsu(s)
+        return z, z, dict(method=method, ref=0.0, regions=z, texture={}, rejected=z, n_rejected=0, threshold=t,
+                          threshold_auto=t_auto)
+    m = s > t
     m = ndi.binary_fill_holes(morphology.opening(m, morphology.disk(max(1, round(4 * k)))))
     m = morphology.remove_small_objects(m, max_size=int(0.4 * min_area))
     lab = _split(m, k, px)
@@ -186,4 +202,4 @@ def detect(b, k=1.0, method='texture_merge'):
     dl = np.where(dl > 0, dl + nuc.max(), 0)
     rejected = np.where(np.isin(lab, [l for l in info if l not in foc and l not in dim]), lab, 0)
     return nuc, dl, dict(method=method, ref=ref, regions=lab, texture=info, rejected=rejected,
-                         n_rejected=len(info) - len(foc) - len(dim))
+                         n_rejected=len(info) - len(foc) - len(dim), threshold=t, threshold_auto=t_auto)

@@ -13,7 +13,7 @@ Inputs are ImageJ RGB TIFF exports with the signal in the matching channel (e.g.
 GUI toolkit: **PySide6 (Qt)**, cross-platform (macOS, Windows, Linux).
 
 ## Pipeline
-Every metric in the tables and heatmaps is explained (in Korean) in [`docs/metrics.md`](docs/metrics.md).
+Every metric in the tables and heatmaps is explained (in Korean) in [`docs/metrics.md`](docs/metrics.md); the full algorithm, with the cell-ROI step in detail, in [`docs/algorithm.md`](docs/algorithm.md).
 
 A step-by-step explanation with figures from one example image is in [`docs/Mito_Analyzer_algorithm.pdf`](docs/Mito_Analyzer_algorithm.pdf) (regenerate with `tools/make_algorithm_pdf.py RED GREEN BLUE -o docs/Mito_Analyzer_algorithm.pdf`).
 
@@ -44,6 +44,14 @@ The **Analysis (all samples)** tab loads every `<sample>_per_cell.csv` / `_per_m
 **Groups.** Each image set has a *Group* (default: its dataset); select rows and press *Set group…* to put several sets in one group. Groups are saved in `<output>/groups.csv` and can be changed later with *Groups…* in the Analysis tab (CLI: `--group NAME`). The Analysis tab compares them:
 - *Groups: correlation*: the mito × green correlation heatmaps of group A and group B side by side, and a third heatmap of the difference (B − A) with `*` p < 0.05 / `**` p < 0.01 (Fisher z test for two independent correlations); the largest differences are listed below.
 - *Groups: mean / median*: per metric, the individual values with mean ± SD / SEM / 95 % CI or median ± IQR per group, and a table of n, mean, SD, SEM, 95 % CI, median, Q1, Q3 per group with Welch t + Mann-Whitney U (two groups) or one-way ANOVA + Kruskal-Wallis (more). The unit can be cells / mito objects or images (the mean of each image, so groups with many cells from few images are not over-weighted).
+
+**Multi-group analysis.** *Groups: mean / median* takes a *Control* group (each group vs the control, Welch t and Mann-Whitney U, Holm-adjusted, stars on the plot), a *Groups shown* picker, and a long-format table (one row per metric × group). *Groups: correlation* has an *All groups* mode (one heatmap per group and a Cochran's Q map of where the correlation differs between groups) besides *A vs B* (◀ ▶ step B through the groups). Per-group correlation matrices are cached, so switching is fast with many groups.
+
+**Group-wise export.** After every batch (and with *Export by group…* in the Analysis tab) `<output>/groups/` gets one folder per group (`<group>_cells.csv`, `_mito.csv`, `_cells_green_pos/neg.csv`, `_per_image.csv`, `_correlations.csv`, `_results.xlsx`), `group_comparison.xlsx` (per metric × group: n, mean, SD, SEM, 95 % CI, median, IQR, the across-group tests and, with a control, each group vs control with Holm adjustment; all / green+ / green− cells, per cell, per image and per mito object) and `groups_overview.csv`. CLI: `--control NAME`, `--no-group-export`.
+
+**Pixel size.** Read from OME `PhysicalSizeX`, the ImageJ `unit=` (micron, nm, mm, cm, inch) with `XResolution`, or `ResolutionUnit` (cm / inch); values outside 0.005–10 µm/px (e.g. 72 dpi) count as missing. The table's *µm/px* column shows it (red `?` if missing); *Run all* asks for the missing values once, and each cell can be edited. Recorded as `pixel_size_um` / `pixel_size_source` in the settings sheet. CLI: `--pixel-size-um` (else 0.099 with a warning).
+
+**Manual thresholds.** Options → *Thresholds*: nuclei, cell area (mito density level, default 0.12), mitochondria, bright green (green+) and green puncta are automatic per image, or one manual value for every image of the batch. *Preview / adjust thresholds…* shows the mask live on any image set as you move a slider (with that image's automatic value), then *Apply to all images* or *This image only* (stored in the table's *Thresholds* column; it wins over the batch value). Values used and the automatic ones go to the settings sheet. CLI: `--thr-nuclei`, `--cell-fg-level`, `--thr-mito`, `--thr-green-bright`, `--thr-puncta`.
 
 Correlation views (per sample and pooled): heatmap of Pearson r (or Spearman ρ) for every mito × green pair; click a square for its scatter with the least-squares line, 95 % band, r, R², p and n, split into quadrants at the mean (or median) of X and Y with the share of points in each, so negative relations (quadrants II / IV) stand out. With log X / log Y the fit uses log10 values.
 

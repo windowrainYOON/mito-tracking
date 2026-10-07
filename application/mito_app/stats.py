@@ -106,10 +106,11 @@ def correlation_table(cell_rows, mito_rows):
 def corr_matrix(rows, xs, ys, method='r'):
     """(len(ys), len(xs)) matrix of Pearson r ('r') or Spearman rho ('rho') and the n behind each value."""
     vals = np.full((len(ys), len(xs)), np.nan); ns = np.zeros(vals.shape, int)
+    Y = [numeric(rows, yk) for yk, _ in ys]   # convert each column once
     for j, (xk, _) in enumerate(xs):
         x = numeric(rows, xk)
         for i, (yk, _) in enumerate(ys):
-            y = numeric(rows, yk)
+            y = Y[i]
             if method == 'r':
                 reg = regression(x, y); vals[i, j], ns[i, j] = reg['r'], reg['n']
             else:
@@ -126,6 +127,67 @@ def corr_diff_p(r1, n1, r2, n2):
         z = (np.arctanh(r2) - np.arctanh(r1)) / se
     p = 2 * stats.norm.sf(np.abs(z))
     return np.where((n1 > 3) & (n2 > 3), p, np.nan)
+
+
+def corr_heterogeneity_p(vals, ns):
+    """Cochran's Q test that k independent correlations (one matrix per group) are equal; per cell of the
+    matrices. Groups with n <= 3 or a missing value are left out of that cell. nan where < 2 groups remain."""
+    V = np.clip(np.asarray(vals, float), -0.999999, 0.999999); N = np.asarray(ns, float)
+    ok = np.isfinite(V) & (N > 3)
+    z = np.where(ok, np.arctanh(np.where(ok, V, 0)), 0); w = np.where(ok, N - 3, 0)
+    sw = w.sum(0)
+    with np.errstate(divide='ignore', invalid='ignore'):
+        zbar = (w * z).sum(0) / sw
+        q = (w * (z - zbar) ** 2).sum(0)
+    df = ok.sum(0) - 1
+    p = stats.chi2.sf(q, np.maximum(df, 1))
+    return np.where(df >= 1, p, np.nan)
+
+
+def holm(pvals):
+    """Holm-Bonferroni adjusted p values (nan entries are ignored and stay nan)."""
+    p = np.asarray(pvals, float); out = np.full(p.shape, np.nan)
+    idx = [i for i in np.argsort(p) if np.isfinite(p[i])]
+    m = len(idx); run = 0.0
+    for r, i in enumerate(idx):
+        run = max(run, min(1.0, (m - r) * p[i])); out[i] = run
+    return out
+
+
+def pair_test(a, b):
+    """Welch t and Mann-Whitney U p values for two samples (nan if not computable)."""
+    a = np.asarray(a, float); b = np.asarray(b, float); a = a[np.isfinite(a)]; b = b[np.isfinite(b)]
+    if len(a) < 2 or len(b) < 2 or np.ptp(np.concatenate([a, b])) == 0:
+        return math.nan, math.nan
+    return (float(stats.ttest_ind(a, b, equal_var=False).pvalue),
+            float(stats.mannwhitneyu(a, b, alternative='two-sided').pvalue))
+
+
+def group_summary_long(rows, metrics, groups, control=None, key='group'):
+    """Long-format group comparison, one row per metric x group: n, mean, SD, SEM, 95 % CI, median, IQR,
+    the across-group test (Welch / Mann-Whitney for 2 groups, ANOVA / Kruskal-Wallis for more) and, when a
+    `control` group is given, every other group vs the control (Welch, Mann-Whitney), Holm-adjusted over the
+    groups compared with it for that metric. Without a control and with 2 groups the pair is the test above."""
+    out = []
+    for mk, ml in metrics:
+        arrays = {g: numeric([r for r in rows if str(r.get(key, '')) == g], mk) for g in groups}
+        p1, p2, n1, n2 = group_test(list(arrays.values()))
+        vs = {}
+        if control in arrays:
+            others = [g for g in groups if g != control]
+            raw = [pair_test(arrays[g], arrays[control]) for g in others]
+            adj_t = holm([r[0] for r in raw]); adj_u = holm([r[1] for r in raw])
+            vs = {g: (raw[i][0], raw[i][1], adj_t[i], adj_u[i]) for i, g in enumerate(others)}
+        for g in groups:
+            d = dict(metric=ml, group=g, **describe(arrays[g]))
+            d[f'p all groups ({n1})'] = p1; d[f'p all groups ({n2})'] = p2
+            if control in arrays:
+                t, u, ta, ua = vs.get(g, (math.nan,) * 4)
+                d.update({'vs control': control if g != control else '(control)', 'p Welch vs control': t,
+                          'p MWU vs control': u, 'p Welch vs control (Holm)': ta, 'p MWU vs control (Holm)': ua})
+            d['column'] = mk
+            out.append(d)
+    return out
 
 
 def describe(v):

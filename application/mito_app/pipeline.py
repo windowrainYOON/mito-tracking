@@ -8,7 +8,7 @@ matching channel, or single-channel images):
   blue  = nuclei (one in-focus nucleus = one cell)
 """
 import csv, os, re
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, fields, replace
 
 import numpy as np
 
@@ -30,6 +30,26 @@ class Params:
     dim_nuclei: bool = True           # out-of-focus nuclei also seed (and own) a cell
     trim_edge_cells: bool = True      # cut a frame-touching tip off along a mito-free line so the cell is kept
     nuclei_method: str = 'texture_merge'  # nucleus detection: 'texture_merge', 'texture' or 'otsu' (mito_app/nuclei.py)
+    # manual thresholds (0 = automatic, computed per image); see THRESHOLDS and mito_app/thresholds.py
+    thr_nuclei: float = 0.0           # nucleus candidates: flattened (texture) or smoothed (otsu) blue
+    cell_fg_level: float = 0.12       # cell area: mito density (red at 3 um / its 99th percentile) above this
+    thr_mito: float = 0.0             # mito mask: preprocessed red (rolling ball 1.5 um + sigma 0.7 px)
+    thr_green_bright: float = 0.0     # green+ cells: bright green, smoothed auto-levelled green
+    thr_puncta: float = 0.0           # green puncta: top-hat of the background-subtracted green
+
+
+# (Params field, label, unit, image it applies to, what "auto" means)
+THRESHOLDS = (
+    ('thr_nuclei', 'Nuclei', 'blue', 'flattened blue (texture) / smoothed blue (Otsu)', '0.5 × Otsu (texture), Otsu'),
+    ('cell_fg_level', 'Cell area', '× p99', 'mito density (red at 3 µm ÷ its 99th percentile)', 'fixed 0.12'),
+    ('thr_mito', 'Mitochondria', 'red', 'preprocessed red (rolling ball 1.5 µm, σ 0.7 px)',
+     'per cell: local mean AND 0.5 × Otsu (split) / Otsu of raw red (MiNA classic)'),
+    ('thr_green_bright', 'Green+ (bright green)', 'green AL', 'smoothed auto-levelled green',
+     'two Otsu steps, ≥ 3 × cytoplasm level'),
+    ('thr_puncta', 'Green puncta', 'top-hat', 'top-hat of background-subtracted green',
+     'max(Otsu, median + 6 MAD) × sensitivity'),
+)
+PARAM_FIELDS = {f.name for f in fields(Params)}
 
 
 def sample_name(red_path):
@@ -187,6 +207,71 @@ def write_group_tables(results):
         write_xlsx(os.path.join(d, f'{tag}_all_results.xlsx'), sheets + [('all_cells', cells), ('all_mito', mito)])
 
 
+GROUP_EXPORT_DIR = 'groups'
+
+
+def write_group_exports(root, out=None, control=None, log=print):
+    """Group-wise data export of every sample under `root` (groups from groups.csv, default = dataset):
+
+      <out>/<group>/<group>_cells.csv, _mito.csv            all cells / mito objects of the group
+      <out>/<group>/<group>_cells_green_pos.csv, …_neg.csv   the same per green status (and for mito)
+      <out>/<group>/<group>_per_image.csv                   one row per image: mean of each cell metric
+      <out>/<group>/<group>_correlations.csv                regression / Spearman of every metric pair
+      <out>/<group>/<group>_results.xlsx                    all of the above as sheets
+      <out>/group_comparison.xlsx (+ _cells.csv, _cells_per_image.csv)
+          every metric x group: n, mean, SD, SEM, 95 % CI, median, IQR, the across-group tests and, with a
+          `control` group, each group vs control (Holm-adjusted); for all / green+ / green- cells, per cell,
+          per image and per mito object
+      <out>/groups_overview.csv                             images, cells, green+ cells, mito objects per group
+    `out` defaults to <root>/groups. Returns the output folder, or '' when there is nothing to export."""
+    cells, mito, samples = load_results(root)
+    if not samples:
+        return ''
+    out = out or os.path.join(root, GROUP_EXPORT_DIR)
+    os.makedirs(out, exist_ok=True)
+    groups = sorted({s['group'] for s in samples})
+    xs_c = stats.available(stats.CELL_X + stats.CELL_Y, cells)
+    xs_m = stats.available(stats.MITO_X + stats.MITO_Y, mito)
+    keys_c = [k for k, _ in xs_c]
+    overview = []
+    for g in groups:
+        gd = os.path.join(out, safe_name(g)); os.makedirs(gd, exist_ok=True)
+        tag = safe_name(g)
+        gc = [r for r in cells if r['group'] == g]; gm = [r for r in mito if r['group'] == g]
+        img = stats.sample_means(gc, keys_c)
+        corr = stats.correlation_table(gc, gm)
+        sheets = [('cells', gc), ('mito', gm), ('per_image', img), ('correlations', corr)]
+        write_csv(os.path.join(gd, f'{tag}_cells.csv'), gc)
+        write_csv(os.path.join(gd, f'{tag}_mito.csv'), gm)
+        write_csv(os.path.join(gd, f'{tag}_per_image.csv'), img)
+        write_csv(os.path.join(gd, f'{tag}_correlations.csv'), corr)
+        for g_key, g_tag in GREEN_GROUPS:
+            sc = [r for r in gc if r.get('green_status') == g_key]; sm = [r for r in gm if r.get('green_status') == g_key]
+            write_csv(os.path.join(gd, f'{tag}_cells_{g_tag}.csv'), sc, gc[0] if gc else None)
+            write_csv(os.path.join(gd, f'{tag}_mito_{g_tag}.csv'), sm, gm[0] if gm else None)
+            sheets += [(f'cells_{g_tag}', sc), (f'mito_{g_tag}', sm)]
+        write_xlsx(os.path.join(gd, f'{tag}_results.xlsx'), sheets)
+        overview.append(dict(group=g, images=len({(s['dataset'], s['preset'], s['sample']) for s in samples
+                                                   if s['group'] == g}),
+                             cells=len(gc), green_pos_cells=sum(r.get('green_status') == 'positive' for r in gc),
+                             mito_objects=len(gm)))
+    write_csv(os.path.join(out, 'groups_overview.csv'), overview)
+    comp = []
+    for label, flt in (('all', ''), ('green_pos', 'positive'), ('green_neg', 'negative')):
+        c = [r for r in cells if not flt or r.get('green_status') == flt]
+        m = [r for r in mito if not flt or r.get('green_status') == flt]
+        per_cell = stats.group_summary_long(c, xs_c, groups, control)
+        per_img = stats.group_summary_long(stats.sample_means(c, keys_c), xs_c, groups, control)
+        per_mito = stats.group_summary_long(m, xs_m, groups, control)
+        comp += [(f'cells_{label}', per_cell), (f'images_{label}', per_img), (f'mito_{label}', per_mito)]
+        if label == 'all':
+            write_csv(os.path.join(out, 'group_comparison_cells.csv'), per_cell)
+            write_csv(os.path.join(out, 'group_comparison_cells_per_image.csv'), per_img)
+    write_xlsx(os.path.join(out, 'group_comparison.xlsx'), [('overview', overview)] + comp)
+    log(f'Group export: {len(groups)} group(s) -> {out}')
+    return out
+
+
 def _num(v):
     try:
         return float(v) if v not in ('', 'True', 'False') else v
@@ -232,29 +317,34 @@ def _as_rgb(a, g):
     return np.dstack([np.zeros_like(g8), g8, np.zeros_like(g8)])
 
 
-def run(red_path, green_path, blue_path, outdir, params=None, name=None, log=print):
-    """Run the full pipeline and write all outputs to `outdir`. Returns a dict of results and file paths."""
+def run(red_path, green_path, blue_path, outdir, params=None, name=None, log=print, overrides=None):
+    """Run the full pipeline and write all outputs to `outdir`. Returns a dict of results and file paths.
+    `overrides`: per-image Params values (e.g. {'pixel_size_um': 0.1, 'thr_mito': 40}) on top of `params`."""
     p = params or Params()
+    if overrides:
+        p = replace(p, **{k: v for k, v in overrides.items() if k in PARAM_FIELDS})
     name = name or sample_name(red_path)
     os.makedirs(outdir, exist_ok=True)
 
     log('1/5  Loading images')
     a, g, px = cell_roi.load_green(green_path)
+    px_source = 'TIFF'
     if p.pixel_size_um > 0:
-        px = p.pixel_size_um
-    elif px == 1.0:  # no calibration in the file
-        px = cell_roi.REF_PX_UM
-        log(f'     No pixel size in the TIFF; assuming {px} um/px (set it in Options if different)')
+        px, px_source = p.pixel_size_um, 'entered'
+    elif not px:  # no calibration in the file
+        px, px_source = cell_roi.REF_PX_UM, 'assumed'
+        log(f'     WARNING: no pixel size in the TIFF ({cell_roi.read_pixel_size(green_path)[1]}); assuming {px} um/px. '
+            'Enter the real value (Pixel size column or Options) if it differs.')
     k = float(np.clip(cell_roi.REF_PX_UM / px, 0.2, 5))
     a = _as_rgb(a, g)
     nuc_img, _ = cell_roi.load_nuclei(blue_path, k)  # scale bar removed
-    nuc, dim, ninfo = nuclei.detect(nuc_img, k, p.nuclei_method)
+    nuc, dim, ninfo = nuclei.detect(nuc_img, k, p.nuclei_method, p.thr_nuclei)
     red, _ = mina.load_channel(red_path, 0)
     green, _ = mina.load_channel(green_path, 1)
     if not (red.shape == g.shape == nuc_img.shape):
         raise ValueError(f'Image sizes differ: red {red.shape}, green {g.shape}, blue {nuc_img.shape}')
     gn, norm = cell_roi.normalize_green(g, k)
-    log(f'     {red.shape[1]}x{red.shape[0]} px, pixel size {px:.4f} um, {nuc.max()} in-focus nuclei; '
+    log(f'     {red.shape[1]}x{red.shape[0]} px, pixel size {px:.4f} um ({px_source}), {nuc.max()} in-focus nuclei; '
         f'green auto-levels: background {norm["offset"]:.2f}, gain x{norm["gain"]:.2f}')
 
     log('2/5  Segmenting cells (one nucleus per cell; mito-free lines and cell shape set the borders)')
@@ -268,7 +358,7 @@ def run(red_path, green_path, blue_path, outdir, params=None, name=None, log=pri
             log(f'     + {int(nuc.max()) - n_focus} dim (out-of-focus) nuclei used as cell seeds')
     res = cell_roi.segment(gn, min_area_px=int(p.min_area_um2 / px ** 2), nuclei=nuc, k=k)
     res['nuc_img'] = nuc_img
-    morph = cell_roi.segment_morph(red, nuc, res['landscape'], px, k)
+    morph = cell_roi.segment_morph(red, nuc, res['landscape'], px, k, fg_level=p.cell_fg_level)
     res['labels'], res['fg'] = morph['labels'], morph['fg']
     trimmed = {}
     if p.trim_edge_cells:
@@ -277,7 +367,7 @@ def run(red_path, green_path, blue_path, outdir, params=None, name=None, log=pri
         res['trimmed'] = (lab0 > 0) & (res['labels'] == 0)
         if trimmed:
             log(f'     {len(trimmed)} cells at the frame kept by cutting their tip off along a mito-free line')
-    gstatus, ginfo = green_cells.classify(gn, res['labels'], nuc, k, p.green_pos_percent / 100)
+    gstatus, ginfo = green_cells.classify(gn, res['labels'], nuc, k, p.green_pos_percent / 100, p.thr_green_bright)
     rois = cell_roi.save_outputs(a, gn, res, px, outdir, name, binuc_tau=p.binuc_tau,
                                  exclude_binuc=p.exclude_binucleate)
     n_ok = sum(r['status'] == 'ok' for r in rois)
@@ -290,9 +380,10 @@ def run(red_path, green_path, blue_path, outdir, params=None, name=None, log=pri
 
     lab = res['labels']
     mask_fn = None
+    manual = f'manual threshold {p.thr_mito:g}' if p.thr_mito > 0 else ''
     if p.mito_method == 'split':
-        log('3/5  Mito objects (adaptive threshold + watershed split), then MiNA inside each cell')
-        p0 = dict(mito_objects.P, sigma=mito_objects.P['sigma'] * k)
+        log(f"3/5  Mito objects ({manual or 'adaptive threshold'} + watershed split), then MiNA inside each cell")
+        p0 = dict(mito_objects.P, sigma=mito_objects.P['sigma'] * k, manual_thr=p.thr_mito)
         sm = mito_objects.preprocess(red, px, p0)
         used = [int(r['roi'][4:]) for r in rois if r['status'] == 'ok' or p.include_edge_cells]
         q = mito_objects.scaled_params(sm, np.isin(lab, used), k, p0)
@@ -300,6 +391,12 @@ def run(red_path, green_path, blue_path, outdir, params=None, name=None, log=pri
         def mask_fn(cell):
             fg, _, sep = mito_objects.segment_cell(sm, cell, px, q)
             return sep > 0, mito_objects.fragmentation_metrics(fg, sep, cell, px)
+    elif p.thr_mito > 0:
+        log(f'3/5  MiNA ({manual} on the preprocessed red) inside each cell')
+        sm = mito_objects.preprocess(red, px, dict(mito_objects.P, sigma=mito_objects.P['sigma'] * k))
+
+        def mask_fn(cell):
+            return cell & (sm > p.thr_mito), {}
     else:
         log('3/5  MiNA (Otsu per cell) on the red channel inside each cell')
     rows, b, sk, end, junc = mina.analyze_cells(red, lab, rois, px, green, p.include_edge_cells,
@@ -308,7 +405,7 @@ def run(red_path, green_path, blue_path, outdir, params=None, name=None, log=pri
     log('4/5  Green on mitochondria (per cell, per mito object, green puncta)')
     mito_rows, puncta_rows, mlab, plab, thr = green_q.quantify(
         green, red, lab, b, rows, px, bg=norm['offset'], k=k, sensitivity=p.puncta_sensitivity, min_mito_area_um2=p.min_mito_area_um2,
-        log=lambda s: log('     ' + s))
+        log=lambda s: log('     ' + s), puncta_thr=p.thr_puncta)
     for row in rows:
         c = int(row['cell'][4:])
         row['green_status'] = gstatus[c]
@@ -340,8 +437,12 @@ def run(red_path, green_path, blue_path, outdir, params=None, name=None, log=pri
                  green_cells=os.path.join(outdir, f'{name}_green_cells.png'))
     cell_rows = merge_cell_rows(rois, rows)
     settings = dict(sample=name, red=red_path, green=green_path, blue=blue_path, pixel_size_um=px,
-                    green_background=norm['offset'], green_gain=norm['gain'], puncta_threshold=thr,
-                    green_bright_threshold=ginfo['threshold'],
+                    pixel_size_source=px_source, green_background=norm['offset'], green_gain=norm['gain'],
+                    nuclei_threshold=ninfo.get('threshold', float('nan')),
+                    nuclei_threshold_auto=ninfo.get('threshold_auto', float('nan')),
+                    cell_fg_level=p.cell_fg_level,
+                    mito_threshold=p.thr_mito if p.thr_mito > 0 else 'auto (per cell)',
+                    puncta_threshold=thr, green_bright_threshold=ginfo['threshold'],
                     **{f'param_{k_}': v for k_, v in asdict(p).items()})
     tables = [('cells', cell_rows), ('mito', mito_rows), ('green_puncta', puncta_rows), ('correlations', corr)]
     for (_, t), f in zip(tables, (files['per_cell_csv'], files['per_mito_csv'], files['puncta_csv'], files['corr_csv'])):
@@ -390,7 +491,9 @@ def merge_cell_rows(rois, rows):
 
 
 def _fmt(v):
-    return f'{v:.4f}' if isinstance(v, float) else v
+    if isinstance(v, float):
+        return f'{v:.3e}' if v and abs(v) < 1e-3 else f'{v:.4f}'  # small p values keep their digits
+    return v
 
 
 def write_csv(path, rows, cols=None):
