@@ -3,6 +3,7 @@
 **Mito Analyzer**: a desktop app that measures, for each cell, mitochondrial morphology (MiNA) and how much of a protein of interest (green) sits on the mitochondria, then looks at how the two relate. The code is in [`application/`](application/), with the full description in [`application/README.md`](application/README.md).
 
 📄 **Step-by-step algorithm explanation with an example image (PDF):** [`application/docs/Mito_Analyzer_algorithm.pdf`](application/docs/Mito_Analyzer_algorithm.pdf)
+📖 **사용 설명서 / User manual:** [한국어](application/docs/manual_ko.md) · [English](application/docs/manual_en.md)
 📘 **알고리즘 상세 설명 (세포 ROI 설정 포함):** [`application/docs/algorithm.md`](application/docs/algorithm.md) · **지표 설명:** [`application/docs/metrics.md`](application/docs/metrics.md)
 
 ## 설치 방법

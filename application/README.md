@@ -13,6 +13,8 @@ Inputs are ImageJ RGB TIFF exports with the signal in the matching channel (e.g.
 GUI toolkit: **PySide6 (Qt)**, cross-platform (macOS, Windows, Linux).
 
 ## Pipeline
+**User manual** (installation, first analysis step by step, every option, thresholds, groups, outputs, troubleshooting): [English](docs/manual_en.md) · [한국어](docs/manual_ko.md).
+
 Every metric in the tables and heatmaps is explained (in Korean) in [`docs/metrics.md`](docs/metrics.md); the full algorithm, with the cell-ROI step in detail, in [`docs/algorithm.md`](docs/algorithm.md).
 
 A step-by-step explanation with figures from one example image is in [`docs/Mito_Analyzer_algorithm.pdf`](docs/Mito_Analyzer_algorithm.pdf) (regenerate with `tools/make_algorithm_pdf.py RED GREEN BLUE -o docs/Mito_Analyzer_algorithm.pdf`).
