@@ -1,0 +1,11 @@
+# Exact versions the app was last validated with (Python 3.11-3.13).
+# requirements.txt installs the newest releases instead; use this file if a newer release breaks something:
+#   ./build_mac.sh --locked     or     pip install -r requirements-lock.txt
+numpy==2.4.6
+scipy==1.17.1
+scikit-image==0.26.0
+tifffile==2026.3.3
+roifile==2026.2.10
+matplotlib==3.11.2
+PySide6==6.11.2
+openpyxl==3.1.5

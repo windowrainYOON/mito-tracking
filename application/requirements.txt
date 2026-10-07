@@ -1,9 +1,13 @@
-# Tested with Python 3.11-3.13. Versions are pinned to the ones the pipeline was validated with.
-numpy==2.4.6
-scipy==1.17.1
-scikit-image==0.26.0
-tifffile==2026.3.3
-roifile==2026.2.10
-matplotlib==3.11.2
-PySide6==6.11.2
-openpyxl==3.1.5
+# Newest releases are installed; the lower bounds are the oldest versions with every API the app uses
+# (scikit-image 0.26 for remove_small_objects(max_size=...)). Python 3.11 or newer.
+# Checked 2026-10-07 with the newest releases on Python 3.13 (numpy 2.5.3, scipy 1.18.1, scikit-image 0.26.0,
+# tifffile 2026.9.20, roifile 2026.9.22, matplotlib 3.11.2, PySide6 6.11.2, openpyxl 3.1.5): results identical
+# to the pinned set in requirements-lock.txt.
+numpy>=2.0
+scipy>=1.14
+scikit-image>=0.26
+tifffile>=2024.1.30
+roifile>=2024.1.10
+matplotlib>=3.9
+PySide6>=6.8
+openpyxl>=3.1

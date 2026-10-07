@@ -14,7 +14,9 @@ cd mito-tracking/application
 ./build_mac.sh --add-to-dock     # application/Mito Analyzer.app 을 만들고 Dock 에 고정
 open "Mito Analyzer.app"
 ```
-- Python 3.11 이상이 필요합니다 (`brew install python@3.12` 또는 python.org 설치본).
+- Python 3.11 이상이 필요합니다. 없고 Homebrew가 있으면 스크립트가 `python@3.12`를 자동으로 설치합니다. Homebrew도 없으면 python.org 설치본을 먼저 설치해 주세요.
+- 필요한 패키지는 항상 최신 버전으로 설치됩니다(`requirements.txt`). 최신 버전에서 문제가 생기면 검증된 버전으로 빌드하세요: `./build_mac.sh --locked` (`requirements-lock.txt`).
+- 빌드 환경을 처음부터 다시 만들려면 `./build_mac.sh --clean` 입니다.
 - 서명하지 않은 로컬 빌드라서 macOS 가 막으면 앱을 우클릭 → 열기를 한 번 해 주세요.
 - 업데이트: `git pull` 후 `./build_mac.sh` 를 다시 실행하면 같은 경로에 다시 빌드됩니다.
 
