@@ -20,8 +20,12 @@ for a in "$@"; do
 done
 
 find_python() {
-  for c in ${PYTHON:-} python3.13 python3.12 python3.11 python3 \
-           /opt/homebrew/bin/python3 /usr/local/bin/python3 "$HOME/.local/bin/python3.12"; do
+  local uvpy=""
+  command -v uv >/dev/null 2>&1 && uvpy="$(uv python find '>=3.11' 2>/dev/null || true)"
+  [ -z "$uvpy" ] && [ -x "$HOME/.local/bin/uv" ] && uvpy="$("$HOME/.local/bin/uv" python find '>=3.11' 2>/dev/null || true)"
+  for c in ${PYTHON:-} python3.13 python3.12 python3.11 python3 $uvpy \
+           "$HOME"/.local/bin/python3.1[1-9] /opt/homebrew/bin/python3 /usr/local/bin/python3 \
+           /Library/Frameworks/Python.framework/Versions/3.1[1-9]/bin/python3; do
     if command -v "$c" >/dev/null 2>&1 && "$c" -c 'import sys; sys.exit(sys.version_info < (3, 11))' 2>/dev/null; then
       echo "$c"; return 0
     fi
@@ -39,8 +43,12 @@ if [ -z "$PY" ]; then
     PY="$(find_python || true)"
   fi
   if [ -z "$PY" ]; then
-    echo "Python 3.11 or newer is required. Install it from https://www.python.org/downloads/macos/ " \
-         "(or 'brew install python@3.12') and run this script again." >&2
+    cat >&2 <<'MSG'
+Python 3.11 or newer is required. Either
+  - install it from https://www.python.org/downloads/macos/ , or
+  - without admin rights:  curl -LsSf https://astral.sh/uv/install.sh | sh && ~/.local/bin/uv python install 3.12
+then run this script again.
+MSG
     exit 1
   fi
 fi
@@ -52,9 +60,11 @@ if [ "$CLEAN" = 1 ] || ! .venv/bin/python -c 'import sys; sys.exit(sys.version_i
   "$PY" -m venv .venv
 fi
 
+LOG="$(pwd)/build.log"; : > "$LOG"
+fail() { echo "$1 (last lines of $LOG below)" >&2; tail -40 "$LOG" >&2; exit 1; }
 step "Installing packages ($REQ)"
-.venv/bin/python -m pip install --quiet --upgrade pip
-.venv/bin/python -m pip install --quiet --upgrade -r "$REQ" pyinstaller
+.venv/bin/python -m pip install --upgrade pip >>"$LOG" 2>&1 || fail "pip upgrade failed"
+.venv/bin/python -m pip install --upgrade -r "$REQ" pyinstaller >>"$LOG" 2>&1 || fail "Package install failed"
 .venv/bin/python - <<'EOF'
 import importlib
 for m in ('numpy', 'scipy', 'skimage', 'tifffile', 'roifile', 'matplotlib', 'PySide6', 'openpyxl', 'PyInstaller'):
@@ -66,7 +76,8 @@ step "Checking the app starts"
   echo "The app does not import with these package versions. Try: ./build_mac.sh --locked" >&2; exit 1; }
 
 step "Building (takes a few minutes)"
-.venv/bin/python -m PyInstaller --noconfirm --clean --log-level WARN MitoAnalyzer.spec
+.venv/bin/python -m PyInstaller --noconfirm --clean --log-level WARN MitoAnalyzer.spec >>"$LOG" 2>&1 \
+  || fail "PyInstaller build failed"
 
 rm -rf "Mito Analyzer.app"
 cp -R "dist/Mito Analyzer.app" "Mito Analyzer.app"

@@ -4,3 +4,4 @@ dist/
 *.app/
 __pycache__/
 results/
+build.log
