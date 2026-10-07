@@ -1815,8 +1815,10 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, 'No input', 'Add at least one red/green/blue image set.')
             return
         jobs = [self.table.job(r) for r in range(n)]
-        missing = [f'row {r + 1}: {os.path.basename(j[k]) or k}' for r, j in enumerate(jobs)
-                   for k in ('red', 'green', 'blue') if not os.path.isfile(j[k])]
+        # a CZI channel ('<file>.czi::chN') exists when its CZI file does; report each missing file once
+        missing = list(dict.fromkeys(f'row {r + 1}: {os.path.basename(imgio.split_ref(j[k])[0]) or k}'
+                                     for r, j in enumerate(jobs) for k in ('red', 'green', 'blue')
+                                     if not os.path.isfile(imgio.split_ref(j[k])[0])))
         if missing:
             QMessageBox.warning(self, 'Missing input', 'These files do not exist:\n' + '\n'.join(missing))
             return

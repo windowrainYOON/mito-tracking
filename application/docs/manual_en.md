@@ -42,7 +42,7 @@ then shows how the two relate (correlation, regression) and how **experimental g
 Pick one of three ways. **To analyse data only, use 2-1**; **to change the code as you go, use 2-3**.
 
 ### 2-1. DMG (easiest, no Python needed)
-1. Download `Mito Analyzer-1.1.0-apple-silicon.dmg` and double-click it.
+1. Download `Mito Analyzer-1.1.1-apple-silicon.dmg` and double-click it.
 2. In the window that opens, drag **Mito Analyzer** onto the **Applications** folder icon.
 3. The app is not signed by Apple, so the first start may be blocked ("unidentified developer"):
    - in Applications, **right-click the app → Open → Open**, or

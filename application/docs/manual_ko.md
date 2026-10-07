@@ -42,7 +42,7 @@ English version: [manual_en.md](manual_en.md)
 세 가지 방법 중 하나를 고르세요. **분석만 할 사람은 2-1**, **코드를 고치며 쓸 사람은 2-3**이 편합니다.
 
 ### 2-1. DMG 파일로 설치 (가장 쉬움, Python 필요 없음)
-1. `Mito Analyzer-1.1.0-apple-silicon.dmg` 파일을 받아 더블클릭합니다.
+1. `Mito Analyzer-1.1.1-apple-silicon.dmg` 파일을 받아 더블클릭합니다.
 2. 열린 창에서 **Mito Analyzer** 아이콘을 **Applications** 폴더 아이콘 위로 끌어다 놓습니다.
 3. 처음 열 때 "확인되지 않은 개발자" 경고가 뜨면 (Apple 서명이 없는 앱이라 그렇습니다)
    - 응용 프로그램 폴더에서 앱을 **우클릭 → 열기 → 열기**, 또는
