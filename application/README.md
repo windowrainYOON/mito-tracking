@@ -77,7 +77,7 @@ cd application
 ./build_mac.sh --add-to-dock   # same, and pins it to the Dock once (rebuilds keep the same path)
 ./build_mac.sh --locked        # exact, validated versions (requirements-lock.txt) instead of the newest releases
 ./build_mac.sh --clean         # recreate the build environment (.venv)
-./build_mac.sh --dmg           # also make "Mito Analyzer-<version>.dmg" to give to others (Apple Silicon only, unsigned)
+./build_mac.sh --dmg           # also make "Mito Analyzer-<version>-<arch>.dmg" to give to others (Apple Silicon only, unsigned)
 open "Mito Analyzer.app"
 ```
 Requires Python 3.11+ (installed with Homebrew if missing and `brew` is available). `requirements.txt` has lower bounds only, so the newest releases are installed; `requirements-lock.txt` keeps the last validated versions. The app is unsigned and built locally; if macOS still blocks it, right-click → Open once.

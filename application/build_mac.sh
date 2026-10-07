@@ -4,7 +4,7 @@
 #   --add-to-dock  pin the app to the Dock (only if it is not there yet); rebuilds keep the same path
 #   --locked       install the exact versions in requirements-lock.txt instead of the newest releases
 #   --clean        recreate the build environment (.venv) from scratch
-#   --dmg          also pack the app into "Mito Analyzer-<version>.dmg" to give to others (not tracked by git)
+#   --dmg          also pack the app into "Mito Analyzer-<version>-<arch>.dmg" to give to others (not tracked by git)
 # Needs Python 3.11 or newer. If none is found and Homebrew is installed, python@3.12 is installed with it.
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -101,11 +101,31 @@ fi
 touch "$APP"
 if [ "$DMG" = 1 ]; then
   VER="$(.venv/bin/python -c 'import mito_app; print(mito_app.__version__)')"
-  DMGF="$(pwd)/Mito Analyzer-$VER.dmg"
+  case "$(uname -m)" in arm64) ARCH=apple-silicon ;; x86_64) ARCH=intel ;; *) ARCH="$(uname -m)" ;; esac
+  DMGF="$(pwd)/Mito Analyzer-$VER-$ARCH.dmg"
   step "Packing $DMGF"
   STAGE="$(mktemp -d)"
   cp -R "$APP" "$STAGE/"
   ln -s /Applications "$STAGE/Applications"
+  cat > "$STAGE/READ ME FIRST.txt" <<TXT
+Mito Analyzer $VER ($ARCH Mac)
+
+설치
+  1. Mito Analyzer.app 을 옆의 Applications 폴더로 끌어다 놓으세요.
+  2. 처음 열 때 "확인되지 않은 개발자" 경고가 뜨면 (Apple 서명이 없는 앱이라 그렇습니다):
+     - Applications 에서 앱을 우클릭 > 열기 > 열기, 또는
+     - 시스템 설정 > 개인정보 보호 및 보안 > 아래쪽 "그래도 열기"를 누른 뒤 다시 여세요.
+     한 번만 하면 그다음부터는 바로 열립니다.
+  Python 등 다른 설치는 필요 없습니다. $( [ "$ARCH" = apple-silicon ] && echo "Apple Silicon(M1 이후) Mac 전용입니다." )
+
+Install
+  1. Drag Mito Analyzer.app onto the Applications folder next to it.
+  2. The app is not signed by Apple. If macOS blocks the first launch, right-click the app > Open > Open,
+     or press "Open Anyway" in System Settings > Privacy & Security, then open it again.
+  Nothing else (Python etc.) is needed. $( [ "$ARCH" = apple-silicon ] && echo "Runs on Apple Silicon (M1 or later) Macs only." )
+
+Source and documentation: https://github.com/windowrainYOON/mito-tracking
+TXT
   rm -f "$DMGF"
   hdiutil create -volname "Mito Analyzer $VER" -srcfolder "$STAGE" -fs HFS+ -format UDZO -ov "$DMGF" >>"$LOG" 2>&1 \
     || { rm -rf "$STAGE"; fail "hdiutil failed"; }

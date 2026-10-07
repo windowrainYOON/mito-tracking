@@ -17,7 +17,7 @@ open "Mito Analyzer.app"
 - Python 3.11 이상이 필요합니다. 없고 Homebrew가 있으면 스크립트가 `python@3.12`를 자동으로 설치합니다. Homebrew도 없으면 python.org 설치본을 먼저 설치해 주세요.
 - 필요한 패키지는 항상 최신 버전으로 설치됩니다(`requirements.txt`). 최신 버전에서 문제가 생기면 검증된 버전으로 빌드하세요: `./build_mac.sh --locked` (`requirements-lock.txt`).
 - 빌드 환경을 처음부터 다시 만들려면 `./build_mac.sh --clean` 입니다.
-- 다른 사람에게 줄 설치 파일: `./build_mac.sh --dmg` 로 `Mito Analyzer-<버전>.dmg` 를 만듭니다(git에는 올리지 않음). 받는 사람은 dmg를 열어 앱을 Applications로 끌어다 놓으면 되고, Python은 필요 없습니다. 서명하지 않은 앱이라 처음 열 때 시스템 설정 → 개인정보 보호 및 보안 → "그래도 열기"를 한 번 눌러야 하고, Apple Silicon(M1 이후) Mac에서만 실행됩니다.
+- 다른 사람에게 줄 설치 파일: `./build_mac.sh --dmg` 로 `Mito Analyzer-<버전>-apple-silicon.dmg` 를 만듭니다(git에는 올리지 않음). 받는 사람은 dmg를 열어 앱을 Applications로 끌어다 놓으면 되고, Python은 필요 없습니다. 서명하지 않은 앱이라 처음 열 때 시스템 설정 → 개인정보 보호 및 보안 → "그래도 열기"를 한 번 눌러야 하고, Apple Silicon(M1 이후) Mac에서만 실행됩니다.
 - 서명하지 않은 로컬 빌드라서 macOS 가 막으면 앱을 우클릭 → 열기를 한 번 해 주세요.
 - 업데이트: `git pull` 후 `./build_mac.sh` 를 다시 실행하면 같은 경로에 다시 빌드됩니다.
 
