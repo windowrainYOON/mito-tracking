@@ -31,6 +31,31 @@ def tight(fig):
         pass
 
 
+def safe_draw(fn):
+    """Matplotlib cannot lay out a canvas that has no size yet (a hidden tab right after loading results):
+    skip the drawing then and redo it when the tab is shown (see redraw_when_shown)."""
+    def wrapper(self, *a, **k):
+        try:
+            return fn(self, *a, **k)
+        except (ValueError, np.linalg.LinAlgError):
+            if self.isVisible():
+                raise
+            self._stale = True
+    wrapper.__name__ = fn.__name__
+    return wrapper
+
+
+class RedrawWhenShown:
+    """Mixin for tabs with safe_draw methods: redraw everything once the tab becomes visible."""
+    _stale = False
+
+    def showEvent(self, e):
+        super().showEvent(e)
+        if self._stale:
+            self._stale = False
+            self.redraw()
+
+
 def resource(name):
     base = getattr(sys, '_MEIPASS', os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     return os.path.join(base, 'resources', name)
@@ -328,7 +353,7 @@ class ImageView(QScrollArea):
             self.label.setPixmap(self.pix.scaledToWidth(w, Qt.SmoothTransformation))
 
 
-class CorrelationTab(QWidget):
+class CorrelationTab(RedrawWhenShown, QWidget):
     """Heatmap of all mito x green metric pairs (click a square) + regression scatter of the chosen pair.
 
     The scatter is split into quadrants at the mean (or median) of X and Y, so positive (I/III) and
@@ -442,6 +467,9 @@ class CorrelationTab(QWidget):
         self.x.setCurrentIndex(0); self.y.setCurrentIndex(3 if mito else 1)  # length vs puncta / footprint vs green on mito
         self.filters_changed()
 
+    def redraw(self):
+        self.draw_heat(); self.draw_scatter()
+
     def filters_changed(self, *_):
         self.cell.blockSignals(True); self.cell.clear()
         self.cell.addItems(['All'] + sorted({r['cell'] for r in self.base_rows('mito')}))
@@ -449,6 +477,7 @@ class CorrelationTab(QWidget):
         self.cell.blockSignals(False)
         self.draw_heat(); self.draw_scatter()
 
+    @safe_draw
     def draw_heat(self, *_):
         xs, ys = self.metrics(); rows = self.rows()
         use_r = self.hstat.currentData() == 'r'
@@ -519,6 +548,7 @@ class CorrelationTab(QWidget):
             return 'cell'
         return self.color.currentData()
 
+    @safe_draw
     def draw_scatter(self, *_):
         xk, yk = self.x.currentData(), self.y.currentData()
         f = self.sc_fig; f.clear(); ax = f.add_subplot(111)
@@ -653,7 +683,7 @@ class GroupPicker(QPushButton):
         return [a.text() for a in self.menu.actions() if a.isCheckable() and a.isChecked()]
 
 
-class GroupCorrTab(QWidget):
+class GroupCorrTab(RedrawWhenShown, QWidget):
     """Correlation heatmaps per group.
 
     A vs B: two groups side by side and their difference (B − A) with a Fisher z test per square
@@ -752,6 +782,10 @@ class GroupCorrTab(QWidget):
         q = stats.corr_heterogeneity_p(vals, ns) if len(gs) >= 2 else np.full((len(ys), len(xs)), np.nan)
         return dict(mode='all', xs=xs, ys=ys, groups=gs, vals=vals, ns=ns, nrows=[m[2] for m in mats], q=q)
 
+    def redraw(self):
+        self.draw()
+
+    @safe_draw
     def draw(self, *_):
         f = self.fig; f.clear()
         pair = self.mode.currentData() == 'pair'
@@ -886,7 +920,7 @@ ERRORS = (('mean ± SD', 'mean', 'sd'), ('mean ± SEM', 'mean', 'sem'), ('mean �
           ('median ± IQR', 'median', 'iqr'))
 
 
-class GroupStatsTab(QWidget):
+class GroupStatsTab(RedrawWhenShown, QWidget):
     """Every metric compared across groups: mean / median with error bars over the individual values, and a
     long table (one row per metric x group) with n, mean, SD, SEM, 95 % CI, median, IQR, the across-group tests
     and, when a control group is chosen, each group vs the control (Welch, Mann-Whitney, Holm-adjusted)."""
@@ -992,6 +1026,10 @@ class GroupStatsTab(QWidget):
             if i >= 0:
                 self.metric.setCurrentIndex(i)
 
+    def redraw(self):
+        self.draw()
+
+    @safe_draw
     def draw(self, *_):
         f = self.fig; f.clear(); ax = f.add_subplot(111)
         mk = self.metric.currentData(); groups = self.groups()
