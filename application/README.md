@@ -13,6 +13,8 @@ Inputs are ImageJ RGB TIFF exports with the signal in the matching channel (e.g.
 GUI toolkit: **PySide6 (Qt)**, cross-platform (macOS, Windows, Linux).
 
 ## Pipeline
+Every metric in the tables and heatmaps is explained (in Korean) in [`docs/metrics.md`](docs/metrics.md).
+
 A step-by-step explanation with figures from one example image is in [`docs/Mito_Analyzer_algorithm.pdf`](docs/Mito_Analyzer_algorithm.pdf) (regenerate with `tools/make_algorithm_pdf.py RED GREEN BLUE -o docs/Mito_Analyzer_algorithm.pdf`).
 
 0. **Auto-levels**: the green image is rescaled per image set (dark gap level -> 0, 75th percentile of the smoothed image -> reference level), and all size constants scale with the pixel size, so other image sets with different gain, exposure, bit depth or magnification segment the same way.
