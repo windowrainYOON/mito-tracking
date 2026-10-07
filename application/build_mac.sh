@@ -1,20 +1,22 @@
 #!/usr/bin/env bash
 # Build "Mito Analyzer.app" into this folder (application/).
-# Usage: ./build_mac.sh [--add-to-dock] [--locked] [--clean]
+# Usage: ./build_mac.sh [--add-to-dock] [--locked] [--clean] [--dmg]
 #   --add-to-dock  pin the app to the Dock (only if it is not there yet); rebuilds keep the same path
 #   --locked       install the exact versions in requirements-lock.txt instead of the newest releases
 #   --clean        recreate the build environment (.venv) from scratch
+#   --dmg          also pack the app into "Mito Analyzer-<version>.dmg" to give to others (not tracked by git)
 # Needs Python 3.11 or newer. If none is found and Homebrew is installed, python@3.12 is installed with it.
 set -euo pipefail
 cd "$(dirname "$0")"
 
-DOCK=0; REQ=requirements.txt; CLEAN=0
+DOCK=0; REQ=requirements.txt; CLEAN=0; DMG=0
 for a in "$@"; do
   case "$a" in
     --add-to-dock) DOCK=1 ;;
     --locked) REQ=requirements-lock.txt ;;
     --clean) CLEAN=1 ;;
-    -h|--help) sed -n '2,7p' "$0"; exit 0 ;;
+    --dmg) DMG=1 ;;
+    -h|--help) sed -n '2,8p' "$0"; exit 0 ;;
     *) echo "Unknown option: $a (see --help)" >&2; exit 2 ;;
   esac
 done
@@ -97,5 +99,19 @@ if [ "$DOCK" = 1 ]; then
 fi
 # refresh Finder/Dock icon cache for the rebuilt bundle
 touch "$APP"
+if [ "$DMG" = 1 ]; then
+  VER="$(.venv/bin/python -c 'import mito_app; print(mito_app.__version__)')"
+  DMGF="$(pwd)/Mito Analyzer-$VER.dmg"
+  step "Packing $DMGF"
+  STAGE="$(mktemp -d)"
+  cp -R "$APP" "$STAGE/"
+  ln -s /Applications "$STAGE/Applications"
+  rm -f "$DMGF"
+  hdiutil create -volname "Mito Analyzer $VER" -srcfolder "$STAGE" -fs HFS+ -format UDZO -ov "$DMGF" >>"$LOG" 2>&1 \
+    || { rm -rf "$STAGE"; fail "hdiutil failed"; }
+  rm -rf "$STAGE"
+  echo "DMG: $DMGF ($(du -h "$DMGF" | cut -f1)). Open it and drag the app onto Applications."
+  echo "Unsigned: on another Mac, the first launch needs System Settings > Privacy & Security > Open Anyway."
+fi
 step "Built: $APP"
 echo "Open it with: open \"$APP\""
