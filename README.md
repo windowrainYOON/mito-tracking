@@ -28,11 +28,13 @@ cd mito-tracking/application
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/python run_app.py                                              # GUI
 .venv/bin/python run_app.py --cli RED.tif GREEN.tif BLUE.tif -o OUTDIR    # 이미지 세트 하나, 화면 없이
+.venv/bin/python run_app.py --cli IMAGE.czi -o OUTDIR                       # CZI 파일 하나
 .venv/bin/python run_app.py --cli --batch FOLDER [FOLDER…] -o OUTDIR      # 폴더 안 모든 세트 (하위 폴더까지)
 ```
 
 ### 입력 이미지
 같은 시야의 3채널 TIFF (ImageJ RGB 내보내기 또는 단일 채널 8-bit). 파일 이름으로 세트를 묶습니다: `…_Ch1_Red.tif` (미토콘드리아), `…_Ch2_Green.tif` (관심 단백질), `…_Ch3_Blue.tif` (핵).
+또는 Zeiss `.czi` 파일 (파일 하나가 세트 하나). 채널 역할(미토 / 단백질 / 핵)은 채널 이름으로 추정하고, **Channel roles…** 버튼으로 여러 파일에 한꺼번에 바꿀 수 있습니다 (명령줄: `--czi-channels mito=0,protein=1,nucleus=2`).
 
 ## 알고리즘 요약
 0. **밝기 자동 보정**: green 의 배경(하위 1 %)과 세포질 기준 밝기(75 %)를 기준 세트 단위로 맞춥니다. 크기 상수는 모두 µm 기준이라 배율·gain·노출이 달라도 같게 동작합니다.

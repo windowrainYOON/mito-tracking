@@ -23,6 +23,10 @@ import argparse, csv, os
 import numpy as np, tifffile, roifile
 from scipy import ndimage as ndi
 from skimage import exposure, feature, filters, io, measure, morphology, segmentation
+try:
+    from . import imgio
+except ImportError:  # run as a script
+    import imgio
 
 
 REF_PX_UM = 0.0990       # pixel size of the reference data set the size parameters were tuned on
@@ -61,6 +65,8 @@ def read_pixel_size(path):
     (cm / inch) with XResolution. A value outside PX_RANGE_UM (typical of a screen dpi such as 72 or 300)
     is treated as missing. Returns (px_um, source)."""
     import re as _re
+    if imgio.is_czi(imgio.split_ref(path)[0]):
+        return imgio.pixel_size(path)
     try:
         with tifffile.TiffFile(path) as t:
             page = t.pages[0]
@@ -103,7 +109,7 @@ def read_pixel_size(path):
 
 def load_green(path):
     """(raw array, green channel with the scale bar removed, pixel size in um or None)."""
-    a = tifffile.imread(path)
+    a = imgio.imread(path)
     if a.ndim == 3 and a.shape[-1] == 3:
         g = a[..., 1].astype(float)
         overlay = (a[..., 0] > 200) & (a[..., 2] > 200)  # white annotations (scale bar)
@@ -405,7 +411,7 @@ def save_outputs(a, g, res, px_um, outdir, prefix, edge_margin=3, binuc_tau=0.0,
 
 def load_nuclei(path, k=1.0):
     """Nuclear-stain image (B channel of an RGB TIFF, or grayscale) -> (intensity, labelled nuclei)."""
-    na = tifffile.imread(path)
+    na = imgio.imread(path)
     nuc_img = na[..., 2].astype(float) if na.ndim == 3 else na.astype(float)
     if na.ndim == 3:
         nuc_img[ndi.binary_dilation((na[..., 0] > 200) & (na[..., 1] > 200), iterations=2)] = 0

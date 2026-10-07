@@ -15,9 +15,9 @@ from PySide6.QtWidgets import (
     QSplitter, QTableView, QTableWidget, QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget,
 )
 
-from . import __version__, nuclei, pipeline, stats
+from . import __version__, imgio, nuclei, pipeline, stats
 
-TIFF_FILTER = 'TIFF images (*.tif *.tiff);;All files (*)'
+TIFF_FILTER = 'Images (*.tif *.tiff *.czi);;TIFF images (*.tif *.tiff);;Zeiss CZI (*.czi);;All files (*)'
 GREEN_COLORS = {'positive': '#2CA02C', 'negative': '#7F7F7F'}
 CELL_COLORS = ['#4C9BE8', '#F28E2B', '#59A14F', '#E15759', '#B07AA1', '#EDC948', '#76B7B2', '#FF9DA7',
                '#9C755F', '#BAB0AC']
@@ -103,7 +103,8 @@ class Worker(QObject):
 
 
 class JobTable(QTableWidget):
-    """Input table, one image set per row. Accepts dropped TIFFs / folders."""
+    """Input table, one image set per row (three TIFFs, or one CZI file with a channel per role).
+    Accepts dropped TIFFs / CZIs / folders."""
     COLS = ('Group', 'Dataset', 'Preset', 'Sample', 'µm/px', 'Red', 'Green', 'Blue', 'Thresholds', 'Status')
     GROUP, DATASET, PRESET, NAME, PX, RED, GREEN, BLUE, THR, STATUS = range(10)
     CH_COL = {'red': 5, 'green': 6, 'blue': 7}
@@ -148,6 +149,7 @@ class JobTable(QTableWidget):
                                             'Select rows and press "Set group…" to group several sets.')
         for k, c in self.CH_COL.items():
             self.set_path(r, k, s[k])
+        self.item(r, self.NAME).setData(Qt.UserRole, s.get('czi'))
         px, src = pipeline.cell_roi.read_pixel_size(s['green'])
         self.setItem(r, self.PX, QTableWidgetItem(''))
         self.set_px(r, px, src)
@@ -194,9 +196,25 @@ class JobTable(QTableWidget):
                                              'the Options thresholds') + '. Change it in Thresholds → Preview / adjust…')
 
     def set_path(self, r, key, path):
-        it = QTableWidgetItem(os.path.basename(path)); it.setFlags(it.flags() & ~Qt.ItemIsEditable)
-        it.setData(Qt.UserRole, path); it.setToolTip(path)
+        it = QTableWidgetItem(imgio.display_name(path)); it.setFlags(it.flags() & ~Qt.ItemIsEditable)
+        it.setData(Qt.UserRole, path)
+        czi, ch = imgio.split_ref(path)
+        it.setToolTip(f'{czi}, channel {ch}. Double-click (or Channel roles…) to change the channel roles.'
+                      if ch is not None else path)
         self.setItem(r, self.CH_COL[key], it)
+
+    def czi(self, r):
+        """CZI file of row r, or None for a TIFF set."""
+        it = self.item(r, self.NAME)
+        return it.data(Qt.UserRole) if it else None
+
+    def roles(self, r):
+        """{'red': channel, 'green': channel, 'blue': channel} of a CZI row."""
+        return {k: imgio.split_ref(self.item(r, c).data(Qt.UserRole))[1] for k, c in self.CH_COL.items()}
+
+    def set_roles(self, r, roles):
+        for k in self.CH_COL:
+            self.set_path(r, k, imgio.channel_ref(self.czi(r), roles[k]))
 
     def text(self, r, c):
         it = self.item(r, c)
@@ -210,6 +228,7 @@ class JobTable(QTableWidget):
         d['group'] = self.text(r, self.GROUP) or d['dataset']
         d['px'], d['px_tiff'] = self.px(r)
         d['overrides'] = self.overrides(r)
+        d['czi'] = self.czi(r)
         return d
 
     def groups(self):
@@ -1403,6 +1422,78 @@ class ThresholdDialog(QDialog):
         self.win.table.set_overrides(r, ov); self.key_changed()
 
 
+class ChannelRolesDialog(QDialog):
+    """Which CZI channel is mitochondria, protein (POI) and nucleus, set once for many CZI files.
+    Roles are given per channel number, so they apply to every chosen file that has the same channel order."""
+    CHOICES = (('red', 'Mito'), ('green', 'Protein (POI)'), ('blue', 'Nucleus'), ('', 'Not used'))
+
+    def __init__(self, files, roles, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle('CZI channel roles'); self.resize(620, 300)
+        infos = [imgio.czi_info(f) for f in files]
+        self.n_min = min(len(i['channels']) for i in infos)
+        chans = max((i['channels'] for i in infos), key=len)
+        names = [tuple(c['name'] for c in i['channels']) for i in infos]
+        self.table = QTableWidget(len(chans), 5)
+        self.table.setHorizontalHeaderLabels(('Channel', 'Name', 'Dye', 'Emission (nm)', 'Role'))
+        self.table.verticalHeader().setVisible(False)
+        self.table.horizontalHeader().setStretchLastSection(True)
+        self.combos = []
+        role_of = {v: k for k, v in roles.items()}
+        for i, c in enumerate(chans):
+            for col, t in enumerate((str(i), c['name'], c['fluor'], f"{c['emission']:g}" if c['emission'] else '')):
+                it = QTableWidgetItem(t); it.setFlags(it.flags() & ~Qt.ItemIsEditable)
+                self.table.setItem(i, col, it)
+            cb = QComboBox()
+            for k, lab in self.CHOICES:
+                cb.addItem(lab, k)
+            cb.setCurrentIndex(next(n for n, (k, _) in enumerate(self.CHOICES) if k == role_of.get(i, '')))
+            self.table.setCellWidget(i, 4, cb); self.combos.append(cb)
+        self.table.resizeColumnsToContents()
+        msg = (f'Applies to {len(files)} CZI file(s) (' + ', '.join(os.path.basename(f) for f in files[:3])
+               + (', …' if len(files) > 3 else '') + ').\nChoose the role of each channel; each role must be '
+               'given to exactly one channel.')
+        if len(set(names)) > 1:
+            msg += (f'\nNote: the channel names differ between these files ({len(set(names))} different sets); '
+                    'roles are applied by channel number.')
+        lab = QLabel(msg); lab.setWordWrap(True)
+        self.guess_btn = QPushButton('Guess from channel names')
+        self.guess_btn.clicked.connect(lambda: self.set_roles(imgio.guess_roles(chans)))
+        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        bb.accepted.connect(self.check); bb.rejected.connect(self.reject)
+        lay = QVBoxLayout(self)
+        lay.addWidget(lab); lay.addWidget(self.table, 1)
+        row = QHBoxLayout(); row.addWidget(self.guess_btn); row.addStretch(1); row.addWidget(bb)
+        lay.addLayout(row)
+
+    def set_roles(self, roles):
+        role_of = {v: k for k, v in roles.items()}
+        for i, cb in enumerate(self.combos):
+            cb.setCurrentIndex(cb.findData(role_of.get(i, '')))
+
+    def roles(self):
+        out = {}
+        for i, cb in enumerate(self.combos):
+            if cb.currentData():
+                out.setdefault(cb.currentData(), []).append(i)
+        return out
+
+    def check(self):
+        got = self.roles()
+        bad = [lab for k, lab in self.CHOICES[:3] if len(got.get(k, [])) != 1]
+        if bad:
+            QMessageBox.warning(self, 'Channel roles', 'Give each of these roles to exactly one channel: '
+                                + ', '.join(bad) + '.')
+            return
+        if max(v[0] for v in got.values()) >= self.n_min:
+            QMessageBox.warning(self, 'Channel roles', f'Some of the chosen files have only {self.n_min} channels.')
+            return
+        self.accept()
+
+    def result_roles(self):
+        return {k: v[0] for k, v in self.roles().items()}
+
+
 class MainWindow(QMainWindow):
     OUT_HINT = 'Default: <common folder of the input folders>/dataset'
 
@@ -1428,12 +1519,18 @@ class MainWindow(QMainWindow):
         self.clear_btn = QPushButton('Clear'); self.clear_btn.clicked.connect(self.clear_rows)
         self.group_btn = QPushButton('Set group…'); self.group_btn.clicked.connect(self.set_group)
         self.group_btn.setToolTip('Put the selected image sets in one group; groups are compared in the Analysis tab')
+        self.roles_btn = QPushButton('Channel roles…'); self.roles_btn.clicked.connect(self.edit_roles)
+        self.roles_btn.setToolTip('CZI files: choose which channel is mito, protein (POI) and nucleus, for the '
+                                  'selected rows (or all CZI rows if none is selected) at once')
+        self.czi_roles = {}  # channel names of a CZI -> roles chosen for it; used for CZIs added later
         row = QHBoxLayout()
-        for b in (self.add_btn, self.addf_btn, self.group_btn, self.del_btn, self.clear_btn):
+        for b in (self.add_btn, self.addf_btn, self.group_btn, self.roles_btn, self.del_btn, self.clear_btn):
             row.addWidget(b)
         iv.addLayout(row)
-        hint = QLabel('Drop TIFFs or folders on the table; files are grouped into red/green/blue sets by name '
-                      '(…Ch1_Red / …Ch2_Green / …Ch3_Blue). Group, dataset, preset and sample can be edited; '
+        hint = QLabel('Drop TIFFs, CZIs or folders on the table; TIFFs are grouped into red/green/blue sets by name '
+                      '(…Ch1_Red / …Ch2_Green / …Ch3_Blue), a CZI file is one set (its channel roles are guessed '
+                      'from the channel names; change them for many files at once with Channel roles…). '
+                      'Group, dataset, preset and sample can be edited; '
                       'select rows and press Set group… to group image sets; double-click a channel to change its file.')
         hint.setWordWrap(True); hint.setStyleSheet('color: gray; font-size: 11px;')
         iv.addWidget(hint)
@@ -1570,11 +1667,12 @@ class MainWindow(QMainWindow):
         return os.path.dirname(self.table.job(n - 1)['red']) if n else ''
 
     def browse_files(self):
-        paths, _ = QFileDialog.getOpenFileNames(self, 'Choose TIFF images (all channels)', self.last_dir(), TIFF_FILTER)
+        paths, _ = QFileDialog.getOpenFileNames(self, 'Choose TIFF images (all channels) or CZI files',
+                                                self.last_dir(), TIFF_FILTER)
         self.add_paths(paths)
 
     def browse_folder(self):
-        d = QFileDialog.getExistingDirectory(self, 'Choose a folder of TIFF images', self.last_dir())
+        d = QFileDialog.getExistingDirectory(self, 'Choose a folder of TIFF / CZI images', self.last_dir())
         if d:
             self.add_paths([d])
 
@@ -1582,31 +1680,76 @@ class MainWindow(QMainWindow):
         if not paths:
             return
         sets, leftover = pipeline.find_sets(paths)
-        have = {self.table.job(r)['red'] for r in range(self.table.rowCount())}
-        new = [s for s in sets if s['red'] not in have]
+        for s in sets:  # CZIs with the channel names of one whose roles were set: same roles
+            if 'czi' in s:
+                roles = self.czi_roles.get(tuple(c['name'] for c in imgio.czi_info(s['czi'])['channels']))
+                if roles:
+                    s.update({k: imgio.channel_ref(s['czi'], v) for k, v in roles.items()}, roles=roles)
+        have = {self.table.czi(r) or self.table.job(r)['red'] for r in range(self.table.rowCount())}
+        new = [s for s in sets if (s.get('czi') or s['red']) not in have]
         for s in new:
             self.table.add_set(s, self.preset_default)
         self.update_out_hint()
         msg = f'Added {len(new)} image set(s)'
         if len(sets) > len(new):
             msg += f', {len(sets) - len(new)} already in the table'
+        n_czi = sum('czi' in s for s in new)
+        if n_czi:
+            msg += (f' ({n_czi} CZI: channel roles guessed from the channel names or reused; check the Red / Green / Blue '
+                    'columns and use Channel roles… to change them)')
         self.statusBar().showMessage(msg)
         if leftover:
-            QMessageBox.information(self, 'Some files were not added',
-                                    'No complete red/green/blue set was found for:\n'
-                                    + '\n'.join(os.path.basename(f) for f in leftover[:20])
-                                    + ('\n…' if len(leftover) > 20 else '')
-                                    + '\n\nAdd them with names ending in _Red / _Green / _Blue '
-                                      '(optionally with Ch1/Ch2/Ch3).')
+            bad_czi = [f for f in leftover if imgio.is_czi(f)]
+            tif = [f for f in leftover if not imgio.is_czi(f)]
+            text = ''
+            if tif:
+                text += ('No complete red/green/blue set was found for:\n'
+                         + '\n'.join(os.path.basename(f) for f in tif[:20]) + ('\n…' if len(tif) > 20 else '')
+                         + '\n\nAdd them with names ending in _Red / _Green / _Blue (optionally with Ch1/Ch2/Ch3).')
+            if bad_czi:
+                text += ('\n\n' if text else '') + ('These CZI files could not be read or have fewer than 3 channels:\n'
+                         + '\n'.join(os.path.basename(f) for f in bad_czi[:20]))
+            QMessageBox.information(self, 'Some files were not added', text)
 
     def cell_double_clicked(self, r, c):
         key = next((k for k, col in JobTable.CH_COL.items() if col == c), None)
         if not key or self.busy():
             return
+        if self.table.czi(r):
+            rows = sorted({i.row() for i in self.table.selectedIndexes()} | {r})
+            self.edit_roles(rows)
+            return
         old = self.table.item(r, c).data(Qt.UserRole)
         path, _ = QFileDialog.getOpenFileName(self, f'Choose {key} image', os.path.dirname(old), TIFF_FILTER)
         if path:
             self.table.set_path(r, key, path)
+
+    def edit_roles(self, rows=None):
+        """Set the channel roles of the selected CZI rows (all CZI rows if none is selected) in one go."""
+        if self.busy():
+            return
+        if not rows:
+            rows = sorted({i.row() for i in self.table.selectedIndexes()}) or range(self.table.rowCount())
+        rows = [r for r in rows if self.table.czi(r)]
+        if not rows:
+            QMessageBox.information(self, 'Channel roles', 'Channel roles are set for CZI files; add CZI files first '
+                                    '(TIFF sets take their roles from the _Red / _Green / _Blue file names).')
+            return
+        files = [self.table.czi(r) for r in rows]
+        try:
+            dlg = ChannelRolesDialog(files, self.table.roles(rows[0]), self)
+        except Exception as e:
+            QMessageBox.warning(self, 'Channel roles', f'Cannot read the CZI files: {e}')
+            return
+        if dlg.exec() != QDialog.Accepted:
+            return
+        roles = dlg.result_roles()
+        for r in rows:
+            self.table.set_roles(r, roles)
+        for f in files:
+            self.czi_roles[tuple(c['name'] for c in imgio.czi_info(f)['channels'])] = roles
+        self.statusBar().showMessage(f'Channel roles set for {len(rows)} CZI file(s): '
+                                     + ', '.join(f'{lab} = ch{roles[k]}' for k, lab in imgio.ROLES))
 
     def remove_rows(self):
         for r in sorted({i.row() for i in self.table.selectedIndexes()}, reverse=True):

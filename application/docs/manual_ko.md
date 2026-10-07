@@ -1,4 +1,4 @@
-# Mito Analyzer 사용 설명서 (v1.0)
+# Mito Analyzer 사용 설명서 (v1.1)
 
 English version: [manual_en.md](manual_en.md)
 
@@ -42,7 +42,7 @@ English version: [manual_en.md](manual_en.md)
 세 가지 방법 중 하나를 고르세요. **분석만 할 사람은 2-1**, **코드를 고치며 쓸 사람은 2-3**이 편합니다.
 
 ### 2-1. DMG 파일로 설치 (가장 쉬움, Python 필요 없음)
-1. `Mito Analyzer-1.0.0-apple-silicon.dmg` 파일을 받아 더블클릭합니다.
+1. `Mito Analyzer-1.1.0-apple-silicon.dmg` 파일을 받아 더블클릭합니다.
 2. 열린 창에서 **Mito Analyzer** 아이콘을 **Applications** 폴더 아이콘 위로 끌어다 놓습니다.
 3. 처음 열 때 "확인되지 않은 개발자" 경고가 뜨면 (Apple 서명이 없는 앱이라 그렇습니다)
    - 응용 프로그램 폴더에서 앱을 **우클릭 → 열기 → 열기**, 또는
@@ -89,6 +89,17 @@ cd mito-tracking/application
 - **픽셀 크기**: Fiji에서 Image → Properties로 µm 단위가 들어간 TIFF면 자동으로 읽습니다. 없으면 8절을 보세요.
 - 한 이미지에 세포가 5–20개 정도, 세포 전체가 화면 안에 들어오는 시야가 좋습니다. 가장자리에 걸린 세포는 분석에서 빠질 수 있습니다.
 
+### 3-1. Zeiss CZI 파일
+ZEN에서 저장한 `.czi` 파일은 한 시야의 모든 채널을 담고 있어서, **CZI 파일 하나가 이미지 세트 하나**입니다. 파일 이름 규칙은 필요 없습니다.
+- TIFF와 똑같이 넣으면 됩니다 (Add files…, Add folder…, 또는 표에 끌어다 놓기). 한 폴더에 TIFF와 CZI가 섞여 있어도 됩니다.
+- **채널 역할**은 파일에 저장된 채널 이름으로 자동 추정합니다. DNA 염색(DAPI, Hoechst 등)은 핵, 방출 파장이 가장 긴 채널은 미토콘드리아, 나머지는 관심 단백질(POI)로 잡습니다. 추정 결과는 표의 Red / Green / Blue 칸에 `파일.czi ch0 AF568-T1` 처럼 보입니다. **한 번은 꼭 확인하세요.**
+- 여러 파일의 역할을 한꺼번에 바꾸려면: 줄을 선택하고 (아무것도 선택하지 않으면 모든 CZI 줄) **Channel roles…** 를 누르거나 CZI 줄의 Red / Green / Blue 칸을 더블클릭한 뒤, 채널마다 *Mito*, *Protein (POI)*, *Nucleus*, *Not used* 중 하나를 고릅니다. 선택은 채널 번호 기준으로 고른 모든 파일에 적용되고, 나중에 넣는 CZI 중 채널 이름이 같은 파일에도 같은 역할이 자동으로 들어갑니다.
+
+  ![채널 역할](manual_img/12_czi_roles.png)
+- 픽셀 크기는 CZI 메타데이터에서 읽습니다 (µm/px 칸 툴팁과 settings 시트에 *CZI* 로 표시).
+- z-stack은 최대 강도 투영(MIP)으로 분석하고, scene이나 시간점이 여러 개면 첫 번째를 씁니다. 타일(mosaic)은 이어 붙입니다. 8-bit보다 깊은 이미지는 비트 수마다 정해진 하나의 비율(예: 12-bit ÷ 16)로 0–255에 맞추고, 이미지마다 따로 늘리지 않아서 한 배치 안의 밝기를 그대로 비교할 수 있습니다.
+- 원본 CZI는 같은 시야의 *Processed* TIFF보다 보통 어둡습니다. 자동 임계값은 이미지마다 맞춰지지만, processed TIFF에서 정한 수동 임계값을 그대로 쓰지 말고 미리보기로 한 번 확인하세요.
+
 ## 4. 처음 분석해 보기 (따라 하기)
 ![시작 화면](manual_img/01_start.png)
 
@@ -113,7 +124,7 @@ cd mito-tracking/application
 | 영역 | 내용 |
 |---|---|
 | **Image sets** 표 | Group · Dataset · Preset · Sample · µm/px · Red · Green · Blue · Thresholds · Status |
-| 표 아래 버튼 | **Add files…** (파일 여러 개 선택), **Add folder…** (폴더, 하위 폴더까지), **Set group…** (선택한 줄의 그룹 정하기), **Remove** (선택한 줄 빼기), **Clear** (모두 빼기) |
+| 표 아래 버튼 | **Add files…** (파일 여러 개 선택), **Add folder…** (폴더, 하위 폴더까지), **Set group…** (선택한 줄의 그룹 정하기), **Channel roles…** (CZI 채널 역할, 3-1), **Remove** (선택한 줄 빼기), **Clear** (모두 빼기) |
 | **Output folder** | 결과 저장 위치. 저장 구조: `<출력>/<dataset>/<preset>-<dataset>/<sample>/` |
 | **Options** | 분석 설정 (6절). 스크롤해서 아래까지 보세요 |
 | **Run all / Stop** | 표의 모든 세트를 차례로 분석 / 지금 세트까지 끝내고 멈춤 |
@@ -127,7 +138,7 @@ cd mito-tracking/application
 - **Preset**: 출력 폴더 구분용 이름 (기본 = 미토 분할 방식 `split`/`otsu`). 같은 데이터를 다른 설정으로 돌릴 때 이름을 바꾸면 결과가 섞이지 않습니다.
 - **Sample**: 이미지 이름 (기본 = 파일 이름에서 채널 부분을 뺀 것)
 - **µm/px**: 픽셀 크기. 더블클릭해서 직접 입력 (8절)
-- **Red/Green/Blue**: 더블클릭하면 그 채널 파일을 다른 파일로 바꿀 수 있습니다
+- **Red/Green/Blue**: 더블클릭하면 그 채널 파일을 다른 파일로 바꿀 수 있습니다 (CZI 줄은 채널 역할 바꾸기, 3-1). Red = 미토콘드리아, Green = 관심 단백질, Blue = 핵.
 - **Thresholds**: 이 이미지에만 쓰는 수동 임계값 (7절). 미리보기 창에서 정합니다.
 
 ## 6. 옵션 하나하나
@@ -184,7 +195,7 @@ cd mito-tracking/application
   - **Run all** 을 누르면 그 세트들의 값을 한 번 묻습니다. 현미경 획득 설정(예: 대물렌즈, zoom, 픽셀 수)에서 확인한 µm/px를 입력하세요.
   - 또는 `?` 칸을 더블클릭해 세트마다 직접 입력합니다.
 - Options의 *Pixel size* 에 값을 넣으면 파일 정보와 상관없이 모든 이미지에 그 값을 씁니다.
-- 확인: 결과 `_results.xlsx` → *settings* 시트의 `pixel_size_um` 과 `pixel_size_source` (TIFF / entered / assumed).
+- 확인: 결과 `_results.xlsx` → *settings* 시트의 `pixel_size_um` 과 `pixel_size_source` (TIFF / CZI / entered / assumed).
 - Fiji에서 파일에 저장하려면: Image → Properties… 에서 Unit = micron, Pixel width/height 입력 후 TIFF로 저장.
 
 ## 9. 그룹 만들기
@@ -284,6 +295,8 @@ cd mito-tracking/application
 "/Applications/Mito Analyzer.app/Contents/MacOS/MitoAnalyzer" --cli --batch "내 실험/PRD 24h" -o ~/results --group PRD --control Control
 # 소스에서
 cd mito-tracking/application && .venv/bin/python run_app.py --cli --batch 폴더 -o 출력폴더
+# CZI 파일 (파일 하나, 또는 --batch 로 폴더). 추정한 채널 역할이 틀리면 직접 지정
+"/Applications/Mito Analyzer.app/Contents/MacOS/MitoAnalyzer" --cli --batch CZI폴더 -o ~/results --czi-channels mito=0,protein=1,nucleus=2
 ```
 자주 쓰는 옵션: `--group 이름`, `--control 대조군`, `--pixel-size-um 0.099`, `--thr-nuclei`, `--cell-fg-level`, `--thr-mito`, `--thr-green-bright`, `--thr-puncta` (0 = 자동), `--mito-method otsu`, `--no-edge-trim`, `--include-edge-cells`, `--green-pos-percent 2`. 전체 목록: `--cli --help`.
 같은 `-o` 폴더에 여러 번 돌리면 그룹이 합쳐지고, 마지막 실행 때 `groups/` 비교표가 다시 만들어집니다.
@@ -291,7 +304,9 @@ cd mito-tracking/application && .venv/bin/python run_app.py --cli --batch 폴더
 ## 15. 문제 해결 (FAQ)
 **앱이 열리지 않아요 / "확인되지 않은 개발자"** → 2-1의 우클릭 → 열기, 또는 시스템 설정 → 개인정보 보호 및 보안 → 그래도 열기.
 
-**파일을 넣었는데 표에 안 나와요** → 파일 이름이 `…Red`, `…Green`, `…Blue` 로 끝나는 세트가 세 개 모두 있어야 합니다. 세트가 안 되는 파일은 목록으로 알려 줍니다. `Merged` 같은 다른 TIFF는 무시됩니다.
+**파일을 넣었는데 표에 안 나와요** → 파일 이름이 `…Red`, `…Green`, `…Blue` 로 끝나는 세트가 세 개 모두 있어야 합니다. 세트가 안 되는 파일은 목록으로 알려 줍니다. `Merged` 같은 다른 TIFF는 무시됩니다. CZI 파일은 채널이 3개 이상이고 읽을 수 있어야 합니다.
+
+**CZI 파일이 엉뚱한 채널로 분석돼요** → 표의 Red / Green / Blue 칸을 확인하고 **Channel roles…** 로 고치세요 (3-1).
 
 **µm/px 에 `?` 가 떠요** → 8절. 값을 입력하거나 Run all 때 물어볼 때 입력하세요.
 

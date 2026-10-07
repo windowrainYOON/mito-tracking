@@ -1,4 +1,4 @@
-# Mito Analyzer user manual (v1.0)
+# Mito Analyzer user manual (v1.1)
 
 한국어: [manual_ko.md](manual_ko.md)
 
@@ -42,7 +42,7 @@ then shows how the two relate (correlation, regression) and how **experimental g
 Pick one of three ways. **To analyse data only, use 2-1**; **to change the code as you go, use 2-3**.
 
 ### 2-1. DMG (easiest, no Python needed)
-1. Download `Mito Analyzer-1.0.0-apple-silicon.dmg` and double-click it.
+1. Download `Mito Analyzer-1.1.0-apple-silicon.dmg` and double-click it.
 2. In the window that opens, drag **Mito Analyzer** onto the **Applications** folder icon.
 3. The app is not signed by Apple, so the first start may be blocked ("unidentified developer"):
    - in Applications, **right-click the app → Open → Open**, or
@@ -89,6 +89,25 @@ cd mito-tracking/application
 - **Pixel size**: read automatically from TIFFs saved with a µm calibration (Fiji: Image → Properties). If it is missing, see section 8.
 - Fields with about 5–20 cells that lie fully inside the image work best; cells cut by the image edge may be left out.
 
+### 3-1. Zeiss CZI files
+A `.czi` file from ZEN holds all channels of a field, so **one CZI file is one image set**; no naming rule is needed.
+- Add CZI files like TIFFs (Add files…, Add folder…, or drop them on the table). Folders may mix TIFFs and CZIs.
+- **Channel roles** are guessed from the channel names in the file: a DNA stain (DAPI, Hoechst, …) is the nucleus,
+  the longest emission wavelength is the mito channel and the remaining one the protein (POI). The guess is shown in the
+  Red / Green / Blue columns as `file.czi ch0 AF568-T1` etc. **Check it once.**
+- To change it for many files at once: select the rows (or none = all CZI rows), press **Channel roles…**
+  (or double-click a Red / Green / Blue cell of a CZI row), and choose *Mito*, *Protein (POI)*, *Nucleus* or
+  *Not used* for each channel. The choice applies by channel number to every chosen file, and CZI files you add later
+  with the same channel names get the same roles.
+
+  ![Channel roles](manual_img/12_czi_roles.png)
+- The pixel size is read from the CZI metadata (shown as *CZI* in the µm/px tooltip and the settings sheet).
+- z-stacks are analysed as their maximum-intensity projection; with several scenes or time points the first one is used;
+  tiles of a mosaic are stitched. Images of more than 8 bits are scaled to 0–255 with one fixed factor per bit depth
+  (e.g. 12-bit ÷ 16), never per image, so intensities stay comparable within a batch.
+- Raw CZI data are usually darker than *Processed* TIFF exports of the same field; the automatic thresholds adapt per
+  image, but do not reuse manual threshold values tuned on processed TIFFs without checking them in the preview.
+
 ## 4. Your first analysis, step by step
 ![Start screen](manual_img/01_start.png)
 
@@ -113,7 +132,7 @@ cd mito-tracking/application
 | Area | What it holds |
 |---|---|
 | **Image sets** table | Group · Dataset · Preset · Sample · µm/px · Red · Green · Blue · Thresholds · Status |
-| Buttons under the table | **Add files…** (several files), **Add folder…** (a folder and its subfolders), **Set group…** (group of the selected rows), **Remove** (selected rows), **Clear** (all rows) |
+| Buttons under the table | **Add files…** (several files), **Add folder…** (a folder and its subfolders), **Set group…** (group of the selected rows), **Channel roles…** (CZI files, 3-1), **Remove** (selected rows), **Clear** (all rows) |
 | **Output folder** | where results go, as `<output>/<dataset>/<preset>-<dataset>/<sample>/` |
 | **Options** | analysis settings (section 6); scroll down to see them all |
 | **Run all / Stop** | analyse every set in turn / finish the current set and stop |
@@ -127,7 +146,7 @@ Editable table cells
 - **Preset**: another folder label (default: the mito method, `split` / `otsu`). Give a different preset when you rerun the same data with other settings, so the results do not mix.
 - **Sample**: the image name (default: the file name without the channel part)
 - **µm/px**: pixel size; double-click to type it (section 8)
-- **Red / Green / Blue**: double-click to pick a different file for that channel
+- **Red / Green / Blue**: double-click to pick a different file for that channel (for a CZI row: to change the channel roles, 3-1). Red = mito, Green = protein (POI), Blue = nucleus.
 - **Thresholds**: manual thresholds for this image only (section 7), set in the preview window
 
 ## 6. Every option
@@ -184,7 +203,7 @@ Every length (µm) and area (µm²) depends on it.
   - **Run all** asks once for these sets. Enter the µm/px from the acquisition settings (objective, zoom, pixel count).
   - Or double-click the `?` cell and type it for that set.
 - A value in Options → *Pixel size* is used for every image, whatever the files say.
-- Check: `_results.xlsx` → *settings* sheet → `pixel_size_um` and `pixel_size_source` (TIFF / entered / assumed).
+- Check: `_results.xlsx` → *settings* sheet → `pixel_size_um` and `pixel_size_source` (TIFF / CZI / entered / assumed).
 - To store it in the files with Fiji: Image → Properties…, Unit = micron, pixel width / height, then save as TIFF.
 
 ## 9. Groups
@@ -284,6 +303,8 @@ For large batches without the window, or on a server.
 "/Applications/Mito Analyzer.app/Contents/MacOS/MitoAnalyzer" --cli --batch "My experiment/PRD 24h" -o ~/results --group PRD --control Control
 # from source
 cd mito-tracking/application && .venv/bin/python run_app.py --cli --batch FOLDER -o OUTDIR
+# CZI files (one file, or folders with --batch); give the channel of each role if the guess is wrong
+"/Applications/Mito Analyzer.app/Contents/MacOS/MitoAnalyzer" --cli --batch CZI_FOLDER -o ~/results --czi-channels mito=0,protein=1,nucleus=2
 ```
 Common options: `--group NAME`, `--control GROUP`, `--pixel-size-um 0.099`, `--thr-nuclei`, `--cell-fg-level`, `--thr-mito`, `--thr-green-bright`, `--thr-puncta` (0 = auto), `--mito-method otsu`, `--no-edge-trim`, `--include-edge-cells`, `--green-pos-percent 2`. Full list: `--cli --help`.
 Several runs into the same `-o` folder add up their groups, and the last run rewrites the `groups/` comparison.
@@ -291,7 +312,9 @@ Several runs into the same `-o` folder add up their groups, and the last run rew
 ## 15. Troubleshooting (FAQ)
 **The app does not open / "unidentified developer"** → right-click → Open (2-1), or System Settings → Privacy & Security → Open Anyway.
 
-**I added files but the table stays empty** → each set needs all three files ending in `…Red`, `…Green`, `…Blue`. Files that do not form a set are listed; other TIFFs such as `Merged` are ignored.
+**I added files but the table stays empty** → each set needs all three files ending in `…Red`, `…Green`, `…Blue`. Files that do not form a set are listed; other TIFFs such as `Merged` are ignored. A CZI file needs at least three channels and must be readable.
+
+**A CZI file is analysed with the wrong channels** → check the Red / Green / Blue columns and fix them with **Channel roles…** (3-1).
 
 **µm/px shows `?`** → section 8: type the value, or enter it when Run all asks.
 

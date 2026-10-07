@@ -3,7 +3,10 @@
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 hidden = (collect_submodules('skimage') + collect_submodules('tifffile') + collect_submodules('openpyxl')
-          + ['roifile', 'matplotlib.backends.backend_qtagg'])
+          + ['roifile', 'matplotlib.backends.backend_qtagg']
+          # compressed CZI subblocks (mito_app/imgio.py); imagecodecs loads its codec modules lazily
+          + ['imagecodecs', 'imagecodecs._shared', 'imagecodecs._imcd', 'imagecodecs._zstd', 'imagecodecs._jpegxr',
+             'imagecodecs._jpeg8'])
 datas = collect_data_files('skimage') + [('resources/icon.png', 'resources')]
 excludes = ['tkinter', 'PySide6.QtWebEngineCore', 'PySide6.QtWebEngineWidgets', 'PySide6.Qt3DCore',
             'PySide6.QtQuick', 'PySide6.QtQml', 'PySide6.QtMultimedia', 'PySide6.QtCharts', 'PySide6.QtPdf',
@@ -15,5 +18,5 @@ exe = EXE(pyz, a.scripts, [], exclude_binaries=True, name='MitoAnalyzer', consol
           argv_emulation=False, target_arch=None, icon='resources/icon.ico')
 coll = COLLECT(exe, a.binaries, a.datas, name='MitoAnalyzer')
 app = BUNDLE(coll, name='Mito Analyzer.app', icon='resources/icon.icns', bundle_identifier='com.mitotracking.mitoanalyzer',
-             info_plist={'NSHighResolutionCapable': True, 'CFBundleShortVersionString': '1.0.0',
+             info_plist={'NSHighResolutionCapable': True, 'CFBundleShortVersionString': '1.1.0',
                          'NSRequiresAquaSystemAppearance': False})

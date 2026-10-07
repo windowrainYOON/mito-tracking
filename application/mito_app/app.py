@@ -2,11 +2,14 @@
 
     python -m mito_app --cli RED.tif GREEN.tif BLUE.tif -o OUTDIR [--exclude-binucleate] [--include-edge-cells]
     python -m mito_app --cli --batch FOLDER_OR_TIFF [...] -o OUTDIR [--dataset NAME] [--preset NAME] [--group NAME]
+    python -m mito_app --cli IMAGE.czi -o OUTDIR [--czi-channels mito=0,protein=1,nucleus=2]
 
 Batch mode groups the TIFFs (folders are searched recursively) into red/green/blue sets by file name and writes each set to
 OUTDIR/<dataset>/<preset>-<dataset>/<sample>/ (dataset defaults to the name of the folder given,
 preset to the mito method). The group of each set (default: its dataset) goes to OUTDIR/groups.csv, and the
 group-wise export (one folder per group + group_comparison.xlsx) to OUTDIR/groups/.
+A Zeiss .czi file is one set by itself; --czi-channels gives the channel (0-based) of each role for every CZI
+file of the run (default: guessed from the channel names, e.g. DAPI = nucleus, longest emission = mito).
 
 Thresholds are automatic per image unless a manual value is given (one value for every image):
     --thr-nuclei, --cell-fg-level, --thr-mito, --thr-green-bright, --thr-puncta
@@ -21,7 +24,10 @@ warnings.filterwarnings('ignore', category=FutureWarning, module='mito_app')
 def cli(argv):
     from . import pipeline
     ap = argparse.ArgumentParser(prog='mito_app --cli')
-    ap.add_argument('inputs', nargs='+', help='RED GREEN BLUE, or with --batch any TIFFs / folders')
+    ap.add_argument('inputs', nargs='+', help='RED GREEN BLUE, one .czi file, or with --batch any TIFFs / CZIs / folders')
+    ap.add_argument('--czi-channels', default='',
+                    help='CZI channel of each role for all CZI files, e.g. mito=0,protein=1,nucleus=2 '
+                         '(default: guessed from the channel names)')
     ap.add_argument('--batch', action='store_true')
     ap.add_argument('--dataset'); ap.add_argument('--preset')
     ap.add_argument('--group', help='group of all sets in this batch (for the group comparison; default: the dataset)')
@@ -62,14 +68,29 @@ def cli(argv):
                         dim_nuclei=not A.no_dim_nuclei, trim_edge_cells=not A.no_edge_trim,
                         nuclei_method=A.nuclei_method, thr_nuclei=A.thr_nuclei, cell_fg_level=A.cell_fg_level,
                         thr_mito=A.thr_mito, thr_green_bright=A.thr_green_bright, thr_puncta=A.thr_puncta)
+    try:
+        roles = pipeline.imgio.parse_roles(A.czi_channels) if A.czi_channels else None
+    except ValueError as e:
+        ap.error(str(e))
+    if not A.batch and len(A.inputs) == 1 and pipeline.imgio.is_czi(A.inputs[0]):
+        sets, _ = pipeline.find_sets(A.inputs, roles)
+        if not sets:
+            ap.error(f'{A.inputs[0]}: cannot tell the channel roles; give --czi-channels')
+        s = sets[0]
+        print('channels: ' + ', '.join(f'{lab} = {pipeline.imgio.display_name(s[k])}' for k, lab in pipeline.imgio.ROLES))
+        pipeline.run(s['red'], s['green'], s['blue'], A.outdir, p, A.name or s['name'])
+        return 0
     if not A.batch:
         if len(A.inputs) != 3:
-            ap.error('give RED GREEN BLUE, or use --batch')
+            ap.error('give RED GREEN BLUE, one .czi file, or use --batch')
         pipeline.run(*A.inputs, A.outdir, p, A.name)
         return 0
-    sets, leftover = pipeline.find_sets(A.inputs)
+    sets, leftover = pipeline.find_sets(A.inputs, roles)
     for f in leftover:
-        print(f'skipped (no complete red/green/blue set): {f}')
+        print(f'skipped (no complete red/green/blue set{"; give --czi-channels" if pipeline.imgio.is_czi(f) else ""}): {f}')
+    for s in sets:
+        if 'czi' in s:
+            print(f"{s['name']}: " + ', '.join(f'{lab} = {pipeline.imgio.display_name(s[k])}' for k, lab in pipeline.imgio.ROLES))
     if not A.pixel_size_um:
         nopx = [s['name'] for s in sets if not pipeline.cell_roi.read_pixel_size(s['green'])[0]]
         if nopx:

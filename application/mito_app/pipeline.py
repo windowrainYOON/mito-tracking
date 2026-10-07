@@ -12,7 +12,7 @@ from dataclasses import asdict, dataclass, fields, replace
 
 import numpy as np
 
-from . import cell_roi, nuclei, green_cells, mina, mito_objects, stats
+from . import cell_roi, imgio, nuclei, green_cells, mina, mito_objects, stats
 from . import green as green_q
 
 
@@ -53,7 +53,11 @@ PARAM_FIELDS = {f.name for f in fields(Params)}
 
 
 def sample_name(red_path):
-    """'Processed_New01_Ch1_Red.tif' -> 'Processed_New01'; 'X_Ch1_Red_Cropped_ROI1.tif' -> 'X_Cropped_ROI1'."""
+    """'Processed_New01_Ch1_Red.tif' -> 'Processed_New01'; 'X_Ch1_Red_Cropped_ROI1.tif' -> 'X_Cropped_ROI1';
+    a CZI channel 'New-01.czi::ch0' -> 'New-01'."""
+    czi, ch = imgio.split_ref(red_path)
+    if ch is not None:
+        return os.path.splitext(os.path.basename(czi))[0]
     stem = os.path.splitext(os.path.basename(red_path))[0]
     out = re.sub(r'[_\- ]*(ch\d+)?[_\- ]*(red|mito)$', '', stem, flags=re.I)
     if out == stem:  # channel tag in the middle of the name
@@ -80,9 +84,11 @@ def find_siblings(path):
     return out
 
 
-def find_sets(paths):
+def find_sets(paths, czi_roles=None):
     """Group TIFF files (or the TIFFs inside folders, searched recursively) into red/green/blue image sets
-    by file name.
+    by file name. A CZI file is one set by itself: its channels are given the roles in `czi_roles`
+    ({'red': mito channel, 'green': protein channel, 'blue': nucleus channel}, 0-based indices) or, when that is
+    None, the roles guessed from its channel names (imgio.guess_roles); the set then carries 'czi' and 'roles'.
 
     Returns (sets, leftover): sets is a list of {'red', 'green', 'blue', 'dataset', 'name', 'root'} dicts in name
     order, where dataset is the name of the folder that was added (or the file's own folder for single files) and
@@ -96,12 +102,27 @@ def find_sets(paths):
             for d, dirs, fs in os.walk(p):
                 dirs[:] = sorted(x for x in dirs if not x.startswith('.'))
                 for f in sorted(fs):
-                    if f.lower().endswith(('.tif', '.tiff')) and not f.startswith('.'):
+                    if f.lower().endswith(('.tif', '.tiff', imgio.CZI_EXT)) and not f.startswith('.'):
                         files.setdefault(os.path.join(d, f), (ds, p))
         elif os.path.isfile(p):
             files.setdefault(p, (os.path.basename(os.path.dirname(p)), os.path.dirname(p)))
-    sets, used = {}, set()
+    sets, used, bad_czi = {}, set(), []
     for f, (ds, root) in files.items():
+        if imgio.is_czi(f):
+            try:
+                n = len(imgio.czi_info(f)['channels'])
+                roles = czi_roles or imgio.guess_roles(imgio.czi_info(f)['channels'])
+                ok = len(roles) == 3 and max(roles.values()) < n
+            except Exception:
+                ok = False
+            if ok:
+                used.add(f)
+                s = imgio.czi_set(f, roles, ds, root)
+                s['_root'] = s.pop('root')
+                sets[s['red']] = s
+            else:
+                bad_czi.append(f)
+            continue
         s = find_siblings(f)
         if len(s) == 3:
             used.update(s.values())
@@ -113,13 +134,13 @@ def find_sets(paths):
     for group in seen.values():
         if len(group) > 1:
             for s in group:
-                sub = os.path.relpath(os.path.dirname(s['red']), s['_root'])
+                sub = os.path.relpath(os.path.dirname(s.get('czi') or s['red']), s['_root'])
                 if sub != '.':
                     s['name'] = f"{sub.replace(os.sep, '_')}_{s['name']}"
     for s in sets.values():
         s['root'] = s.pop('_root')
     # Merged / labels / binary TIFFs etc. are not channel files and are not reported
-    leftover = [f for f in files if f not in used and CHANNEL_RX.search(os.path.basename(f))]
+    leftover = [f for f in files if f not in used and CHANNEL_RX.search(os.path.basename(f))] + bad_czi
     return [sets[k] for k in sorted(sets)], leftover
 
 
@@ -328,7 +349,7 @@ def run(red_path, green_path, blue_path, outdir, params=None, name=None, log=pri
 
     log('1/5  Loading images')
     a, g, px = cell_roi.load_green(green_path)
-    px_source = 'TIFF'
+    px_source = 'CZI' if imgio.is_czi(imgio.split_ref(green_path)[0]) else 'TIFF'
     if p.pixel_size_um > 0:
         px, px_source = p.pixel_size_um, 'entered'
     elif not px:  # no calibration in the file

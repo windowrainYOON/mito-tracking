@@ -23,15 +23,22 @@ import argparse, csv, math, os
 import numpy as np, tifffile
 from scipy import ndimage as ndi
 from skimage import filters, measure, morphology, segmentation
+try:
+    from . import imgio
+except ImportError:  # run as a script
+    import imgio
 
 K8 = np.ones((3, 3), int)
 
 
 def load_channel(path, ch):
-    a = tifffile.imread(path)
-    with tifffile.TiffFile(path) as t:
-        xr = t.pages[0].tags.get('XResolution')
-        px_um = xr.value[1] / xr.value[0] if xr else 1.0
+    a = imgio.imread(path)
+    if imgio.is_czi(imgio.split_ref(path)[0]):
+        px_um = imgio.pixel_size(path)[0] or 1.0
+    else:
+        with tifffile.TiffFile(path) as t:
+            xr = t.pages[0].tags.get('XResolution')
+            px_um = xr.value[1] / xr.value[0] if xr else 1.0
     if a.ndim == 3 and a.shape[-1] == 3:
         img = a[..., ch].astype(np.uint8).copy()
         others = [c for c in range(3) if c != ch]

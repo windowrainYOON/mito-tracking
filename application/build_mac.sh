@@ -69,7 +69,8 @@ step "Installing packages ($REQ)"
 .venv/bin/python -m pip install --upgrade -r "$REQ" pyinstaller >>"$LOG" 2>&1 || fail "Package install failed"
 .venv/bin/python - <<'EOF'
 import importlib
-for m in ('numpy', 'scipy', 'skimage', 'tifffile', 'roifile', 'matplotlib', 'PySide6', 'openpyxl', 'PyInstaller'):
+for m in ('numpy', 'scipy', 'skimage', 'tifffile', 'roifile', 'matplotlib', 'PySide6', 'openpyxl', 'imagecodecs',
+          'PyInstaller'):
     print(f'  {m:11s} {importlib.import_module(m).__version__}')
 EOF
 

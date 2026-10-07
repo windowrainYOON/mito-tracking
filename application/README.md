@@ -8,7 +8,7 @@ Per-cell mitochondrial network analysis for three-channel images of the same fie
 | Green | protein of interest | green on mito, green puncta, green+ / green− call; its weak autofluorescence helps place cell borders |
 | Blue | nuclei | one nucleus (in focus or dim) = one cell (watershed seeds) |
 
-Inputs are ImageJ RGB TIFF exports with the signal in the matching channel (e.g. `…_Ch1_Red.tif`, `…_Ch2_Green.tif`, `…_Ch3_Blue.tif`); single-channel 8-bit TIFFs also work. Files are grouped into red/green/blue sets by that naming pattern.
+Inputs are ImageJ RGB TIFF exports with the signal in the matching channel (e.g. `…_Ch1_Red.tif`, `…_Ch2_Green.tif`, `…_Ch3_Blue.tif`); single-channel 8-bit TIFFs also work. Files are grouped into red/green/blue sets by that naming pattern. Zeiss `.czi` files are read directly, one file per set: the channel roles (mito / protein / nucleus) are guessed from the channel names and can be changed for many files at once with **Channel roles…** (CLI: `--czi-channels mito=0,protein=1,nucleus=2`); z-stacks are max-projected, >8-bit data scaled by a fixed factor per bit depth (see `mito_app/imgio.py`).
 
 GUI toolkit: **PySide6 (Qt)**, cross-platform (macOS, Windows, Linux).
 
@@ -90,6 +90,7 @@ cd application
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/python run_app.py                       # GUI
 .venv/bin/python run_app.py --cli RED.tif GREEN.tif BLUE.tif -o OUTDIR   # headless, one set
+.venv/bin/python run_app.py --cli IMAGE.czi -o OUTDIR                      # headless, one CZI file
 .venv/bin/python run_app.py --cli --batch FOLDER [FOLDER…] -o OUTDIR [--dataset NAME] [--preset NAME]  # headless batch
 ```
 
