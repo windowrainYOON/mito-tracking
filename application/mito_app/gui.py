@@ -31,6 +31,45 @@ def tight(fig):
         pass
 
 
+class AspectBox(QWidget):
+    """Holds one widget (a plot canvas) at a fixed width:height ratio, as large as fits and centred,
+    so a plot keeps its proportions however wide or tall the window is."""
+
+    def __init__(self, child, ratio=4 / 3):
+        super().__init__()
+        self.child, self.ratio = child, ratio
+        child.setParent(self)
+        self.setMinimumSize(320, 240)
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        w, h = self.width(), self.height()
+        cw, ch = (w, int(w / self.ratio)) if w / max(h, 1) < self.ratio else (int(h * self.ratio), h)
+        self.child.setGeometry((w - cw) // 2, (h - ch) // 2, cw, ch)
+
+
+def short(text, n=18):
+    """Shorten a label in the middle ('Condition_01_…_ctrl') so tick labels do not run into each other."""
+    text = str(text)
+    return text if len(text) <= n else text[:n // 2 + 2] + '…' + text[-(n - n // 2 - 3):]
+
+
+def short_groups(groups, n=18):
+    """Short labels for a set of group names: a prefix shared by all names (cut at _ - space) is dropped
+    ('Condition_01_ctrl', 'Condition_02_ctrl' -> '01_ctrl', '02_ctrl'), then each is shortened in the middle."""
+    groups = [str(g) for g in groups]
+    pre = os.path.commonprefix(groups) if len(groups) > 1 else ''
+    cut = max(pre.rfind(c) for c in '_- ') + 1
+    if cut and all(len(g) > cut for g in groups) and any(len(g) > n for g in groups):
+        return {g: short(g[cut:], n) for g in groups}
+    return {g: short(g, n) for g in groups}
+
+
+def group_list(groups, n=6):
+    groups = list(groups)
+    return ', '.join(groups[:n]) + (f', … (+{len(groups) - n})' if len(groups) > n else '')
+
+
 def safe_draw(fn):
     """Matplotlib cannot lay out a canvas that has no size yet (a hidden tab right after loading results):
     skip the drawing then and redo it when the tab is shown (see redraw_when_shown)."""
@@ -671,6 +710,8 @@ class CorrelationTab(RedrawWhenShown, QWidget):
 
 def group_combo():
     c = QComboBox(); c.setSizeAdjustPolicy(QComboBox.AdjustToContents)
+    c.setMaximumWidth(240)   # long group names must not widen the window; the list itself shows them in full
+    c.view().setMinimumWidth(240); c.view().setTextElideMode(Qt.ElideNone)
     return c
 
 
@@ -744,11 +785,12 @@ class GroupCorrTab(RedrawWhenShown, QWidget):
                   QLabel('Statistic'), self.hstat):
             row.addWidget(w)
         row.addStretch(1); row.addWidget(self.export_btn)
-        self.fig = Figure(figsize=(14, 5)); self.canvas = FigureCanvasQTAgg(self.fig)
+        self.fig = Figure(figsize=(8, 6)); self.canvas = FigureCanvasQTAgg(self.fig)
         self.canvas.mpl_connect('motion_notify_event', self.on_hover)
         self.top = QLabel(); self.top.setTextInteractionFlags(Qt.TextSelectableByMouse); self.top.setWordWrap(True)
         self.top.setStyleSheet('font-family: Menlo, Consolas, monospace; font-size: 11px;')
-        lay = QVBoxLayout(self); lay.addLayout(row); lay.addWidget(self.canvas, 1); lay.addWidget(self.top)
+        self.top.setMaximumHeight(130)
+        lay = QVBoxLayout(self); lay.addLayout(row); lay.addWidget(AspectBox(self.canvas), 1); lay.addWidget(self.top)
         note = QLabel('Each heatmap is computed from the cells (or mito objects) of one group. A vs B: Δ = B − A, '
                       '* p < 0.05, ** p < 0.01 (Fisher z test for two independent correlations). All groups: '
                       "Cochran's Q test that the correlation is equal in all shown groups. Hover a square for the "
@@ -833,16 +875,22 @@ class GroupCorrTab(RedrawWhenShown, QWidget):
         self.res = R = self.compute()
         name = self.hstat.currentText()
         unit = 'cells' if self.level.currentData() == 'cell' else 'mito objects'
-        axs = f.subplots(1, 3, sharey=True)
+        grid = f.subplots(2, 2)            # 4:3 canvas: A | B on top, Δ below A (the fourth cell holds the key)
+        axs = [grid[0, 0], grid[0, 1], grid[1, 0]]
         dmax = max(0.5, float(np.nanmax(np.abs(R['d']))) if np.isfinite(R['d']).any() else 0.5)
-        for ax, v, title, cmap, lim in ((axs[0], R['va'], f"A: {R['ga']} (n = {R['nra']} {unit})", 'RdBu_r', 1),
-                                        (axs[1], R['vb'], f"B: {R['gb']} (n = {R['nrb']} {unit})", 'RdBu_r', 1),
-                                        (axs[2], R['d'], f'Δ {name} (B − A)', 'PuOr_r', dmax)):
+        for k, (ax, v, title, cmap, lim) in enumerate((
+                (axs[0], R['va'], f"A: {short(R['ga'], 24)} (n = {R['nra']} {unit})", 'RdBu_r', 1),
+                (axs[1], R['vb'], f"B: {short(R['gb'], 24)} (n = {R['nrb']} {unit})", 'RdBu_r', 1),
+                (axs[2], R['d'], f'Δ {name} (B − A)', 'PuOr_r', dmax))):
             im = ax.imshow(v, cmap=cmap, vmin=-lim, vmax=lim, aspect='auto')
-            ax.set_xticks(range(len(R['xs'])), [l for _, l in R['xs']], rotation=60, ha='right', fontsize=6)
-            ax.set_title(title, fontsize=9)
-            f.colorbar(im, ax=ax, fraction=0.05, pad=0.02)
-        axs[0].set_yticks(range(len(R['ys'])), [l for _, l in R['ys']], fontsize=6)
+            ax.set_xticks(range(len(R['xs'])), [short(l, 22) for _, l in R['xs']] if k == 2 else [],
+                          rotation=60, ha='right', fontsize=5)
+            ax.set_yticks(range(len(R['ys'])), [short(l, 24) for _, l in R['ys']] if k != 1 else [], fontsize=5)
+            ax.set_title(title, fontsize=8)
+            f.colorbar(im, ax=ax, fraction=0.05, pad=0.02).ax.tick_params(labelsize=6)
+        key = grid[1, 1]; key.set_axis_off()
+        key.text(0.02, 0.95, 'Columns (X, mito metrics):\n' + '\n'.join(short(l, 34) for _, l in R['xs']),
+                 fontsize=5, va='top', transform=key.transAxes)
         for i in range(R['d'].shape[0]):
             for j in range(R['d'].shape[1]):
                 p = R['p'][i, j]
@@ -872,8 +920,8 @@ class GroupCorrTab(RedrawWhenShown, QWidget):
         if not gs:
             self.top.setText('No group selected (Groups shown).'); self.canvas.draw_idle(); return
         n = len(gs) + 1
-        cols = min(n, 6 if n > 8 else 4 if n > 4 else n); rows_ = int(np.ceil(n / cols))
-        small = n > 8
+        cols = max(1, int(np.ceil(np.sqrt(n * 4 / 3))))   # grid close to the 4:3 canvas
+        rows_ = int(np.ceil(n / cols)); small = n > 8
         axs = np.atleast_1d(f.subplots(rows_, cols, squeeze=False)).ravel()
         for k, ax in enumerate(axs):
             ax.set_xticks([]); ax.set_yticks([])
@@ -881,7 +929,7 @@ class GroupCorrTab(RedrawWhenShown, QWidget):
                 ax.set_axis_off(); continue
             if k < len(gs):
                 im = ax.imshow(R['vals'][k], cmap='RdBu_r', vmin=-1, vmax=1, aspect='auto')
-                ax.set_title(f"{gs[k]} (n = {R['nrows'][k]})", fontsize=6 if small else 8)
+                ax.set_title(f"{short_groups(gs, 16 if small else 26)[gs[k]]} (n={R['nrows'][k]})", fontsize=5 if small else 8)
             else:
                 q = R['q']
                 ax.imshow(-np.log10(np.clip(q, 1e-12, 1)), cmap='Greys', vmin=0, vmax=4, aspect='auto')
@@ -890,8 +938,9 @@ class GroupCorrTab(RedrawWhenShown, QWidget):
                         if np.isfinite(q[i, j]) and q[i, j] < 0.05:
                             ax.text(j, i, '**' if q[i, j] < 0.01 else '*', ha='center', va='center',
                                     fontsize=6 if small else 8, color='#d62728')
-                ax.set_title("Q test: differs between groups\n(dark = small p; * p<0.05, ** p<0.01)",
-                             fontsize=6 if small else 8)
+                ax.set_title("Q test (p)" if small else
+                             "Q test: differs between groups\n(dark = small p; * p<0.05, ** p<0.01)",
+                             fontsize=5 if small else 8)
             if not small:
                 if k % cols == 0:
                     ax.set_yticks(range(len(R['ys'])), [l for _, l in R['ys']], fontsize=5)
@@ -902,7 +951,8 @@ class GroupCorrTab(RedrawWhenShown, QWidget):
         order = sorted([(q[i, j], i, j) for i in range(q.shape[0]) for j in range(q.shape[1]) if np.isfinite(q[i, j])])
         lines = [f"{len(gs)} groups. Pairs whose {name} differs most between groups (Cochran's Q):"]
         for p, i, j in order[:6]:
-            per = '  '.join(f'{g} {R["vals"][k][i, j]:+.2f}' for k, g in enumerate(gs[:8])) + (' …' if len(gs) > 8 else '')
+            sg = short_groups(gs, 14)
+            per = '  '.join(f'{sg[g]} {R["vals"][k][i, j]:+.2f}' for k, g in enumerate(gs[:6])) + (' …' if len(gs) > 6 else '')
             lines.append(f"  {R['ys'][i][1]} vs {R['xs'][j][1]}: p {fmt_p(p) if fmt_p(p).startswith('<') else '= ' + fmt_p(p)}   {per}")
         lines.append(f'  {n_sig} of {n_tot} squares at p < 0.05 (about {0.05 * n_tot:.0f} expected by chance)')
         self.top.setText('\n'.join(lines))
@@ -910,7 +960,7 @@ class GroupCorrTab(RedrawWhenShown, QWidget):
 
     def on_hover(self, ev):
         R = self.res
-        if R is None or ev.inaxes is None or ev.xdata is None:
+        if R is None or ev.inaxes is None or ev.xdata is None or not ev.inaxes.images:   # heatmaps only
             return
         j, i = int(round(ev.xdata)), int(round(ev.ydata))
         if R['mode'] == 'pair':
@@ -975,17 +1025,19 @@ class GroupStatsTab(RedrawWhenShown, QWidget):
         self.picker = GroupPicker()
         self.table_metric = QCheckBox('Table: this metric only')
         self.export_btn = QPushButton('Export…')
-        row = QHBoxLayout()
+        row1, row2 = QHBoxLayout(), QHBoxLayout()
         for w in (QLabel('Level'), self.level, QLabel('Cells'), self.green, QLabel('Unit'), self.unit,
-                  QLabel('Metric'), self.metric, QLabel('Show'), self.err, QLabel('Control'), self.control,
-                  self.picker, self.table_metric):
-            row.addWidget(w)
-        row.addStretch(1); row.addWidget(self.export_btn)
-        self.fig = Figure(figsize=(6, 4)); self.canvas = FigureCanvasQTAgg(self.fig)
+                  QLabel('Metric'), self.metric):
+            row1.addWidget(w)
+        for w in (QLabel('Show'), self.err, QLabel('Control'), self.control, self.picker, self.table_metric):
+            row2.addWidget(w)
+        row1.addStretch(1); row2.addStretch(1); row2.addWidget(self.export_btn)
+        row = QVBoxLayout(); row.addLayout(row1); row.addLayout(row2)
+        self.fig = Figure(figsize=(8, 6)); self.canvas = FigureCanvasQTAgg(self.fig)
         self.table = TableTab(cell_filter=False)
         self.table.view.clicked.connect(self.row_clicked)
-        split = QSplitter(Qt.Vertical); split.addWidget(self.canvas); split.addWidget(self.table)
-        split.setSizes([450, 350])
+        split = QSplitter(Qt.Vertical); split.addWidget(AspectBox(self.canvas)); split.addWidget(self.table)
+        split.setSizes([560, 260])
         lay = QVBoxLayout(self); lay.addLayout(row); lay.addWidget(split, 1)
         note = QLabel('Points = individual cells / objects (or image means); bar = the chosen centre and error. '
                       'All groups: Welch t and Mann-Whitney U for two groups, one-way ANOVA and Kruskal-Wallis for '
@@ -1000,7 +1052,12 @@ class GroupStatsTab(RedrawWhenShown, QWidget):
         for w in (self.metric, self.err):
             w.currentIndexChanged.connect(self.draw)
         self.metric.currentIndexChanged.connect(lambda *_: self.table_metric.isChecked() and self.fill_table())
-        self.export_btn.clicked.connect(self.export)
+        from PySide6.QtWidgets import QMenu
+        menu = QMenu(self)
+        menu.addAction('Plotted values (CSV)…', self.export_plotted).setToolTip(
+            'Only the dots in the plot: the shown groups and the plotted metric')
+        menu.addAction('Statistics table (CSV)…', self.export)
+        self.export_btn.setMenu(menu)
         self.summary = []
 
     def set_data(self, cell_rows, mito_rows):
@@ -1097,12 +1154,15 @@ class GroupStatsTab(RedrawWhenShown, QWidget):
                         ax.text(groups.index(r['group']), top + 0.04 * span,
                                 '***' if p < 0.001 else '**' if p < 0.01 else '*', ha='center', fontsize=10)
             ax.axvspan(groups.index(ctrl) - 0.4, groups.index(ctrl) + 0.4, color='#eeeeee', zorder=0)
-        labels = [f'{g}\nn = {len(a)}' for g, a in zip(groups, arrays)]
-        if many:
-            ax.set_xticks(range(len(groups)), [f'{g} (n={len(a)})' for g, a in zip(groups, arrays)],
-                          rotation=60, ha='right', fontsize=6 if len(groups) > 20 else 7)
+        if many:   # names shortened in the middle so rotated labels never run into each other
+            ng = len(groups); sg = short_groups(groups, 24)
+            ax.set_xticks(range(ng), [f'{sg[g]} (n={len(a)})' for g, a in zip(groups, arrays)],
+                          rotation=60 if ng <= 12 else 90, ha='right' if ng <= 12 else 'center',
+                          fontsize=7 if ng <= 12 else 6 if ng <= 24 else 5)
         else:
-            ax.set_xticks(range(len(groups)), labels, fontsize=8)
+            sg = short_groups(groups, 18)
+            ax.set_xticks(range(len(groups)), [f'{sg[g]}\nn = {len(a)}' for g, a in zip(groups, arrays)],
+                          fontsize=8)
         pad = max(0.0, (4 - len(groups)) / 2)  # keep few groups close together on a wide axis
         ax.set_xlim(-0.6 - pad, len(groups) - 0.4 + pad)
         ax.set_ylabel(self.metric.currentText())
@@ -1110,10 +1170,43 @@ class GroupStatsTab(RedrawWhenShown, QWidget):
         p1, p2, n1, n2 = stats.group_test(arrays)
         unit = {'row': 'cells' if self.level.currentData() == 'cell' else 'mito objects',
                 'image': 'images'}[self.unit.currentData()]
-        ax.set_title(f'{self.err.currentText()}, unit = {unit}, {len(groups)} groups;  {n1} p {fmt_p(p1) if fmt_p(p1).startswith("<") else "= " + fmt_p(p1)},'
+        ax.set_title(f'{self.err.currentText()}, unit = {unit}, {len(groups)} groups\n{n1} p {fmt_p(p1) if fmt_p(p1).startswith("<") else "= " + fmt_p(p1)},'
                      f'  {n2} p {fmt_p(p2) if fmt_p(p2).startswith("<") else "= " + fmt_p(p2)}'
-                     + (f';  * vs {ctrl}' if ctrl in groups else ''), fontsize=9)
+                     + (f';  * vs {short(ctrl, 24)}' if ctrl in groups else ''), fontsize=8)
         tight(f); self.canvas.draw_idle()
+
+    def plotted_rows(self):
+        """The dots of the current plot: shown groups, current level / cells filter / unit, finite values of the
+        plotted metric only, with just the columns that identify each dot."""
+        mk = self.metric.currentData(); groups = self.groups()
+        if not mk or not groups:
+            return []
+        ident = ['group', 'dataset', 'preset', 'sample']
+        ident += ['n_rows'] if self.unit.currentData() == 'image' else (
+            ['cell', 'green_status'] if self.level.currentData() == 'cell' else ['mito', 'cell', 'green_status'])
+        out, rows = [], self.rows()
+        for g in groups:
+            for r in rows:
+                if str(r.get('group', '')) != g:
+                    continue
+                v = stats.numeric([r], mk)[0]
+                if np.isfinite(v):
+                    out.append({**{k: r.get(k, '') for k in ident}, mk: float(v)})
+        return out
+
+    def export_plotted(self):
+        rows = self.plotted_rows()
+        if not rows:
+            QMessageBox.information(self, 'Export', 'Nothing is plotted.'); return
+        tag = ('cells' if self.level.currentData() == 'cell' else 'mito') + (
+            '_per_image' if self.unit.currentData() == 'image' else '')
+        green = self.green.currentData()
+        tag += f'_{green}' if green and green != 'all' else ''
+        path, _ = QFileDialog.getSaveFileName(self, 'Export plotted values',
+                                              os.path.join(getattr(self, 'export_dir', ''),
+                                                           f'{self.metric.currentData()}_{tag}.csv'), 'CSV (*.csv)')
+        if path:
+            pipeline.write_csv(path, rows)
 
     def export(self):
         if not self.summary:
@@ -1183,7 +1276,7 @@ class AnalysisTab(QWidget):
         self.export_groups_btn.setEnabled(False); self.export_groups_btn.clicked.connect(self.export_groups)
         self.samples = []
         self.folder.returnPressed.connect(self.load)
-        self.info = QLabel('')
+        self.info = QLabel(''); self.info.setWordWrap(True)
         top = QHBoxLayout(); top.addWidget(QLabel('Results folder')); top.addWidget(self.folder, 1)
         top.addWidget(browse); top.addWidget(load); top.addWidget(self.groups_btn); top.addWidget(self.export_groups_btn)
         self.corr = CorrelationTab(pooled=True)
@@ -1217,7 +1310,8 @@ class AnalysisTab(QWidget):
         n_pos = sum(r.get('green_status') == 'positive' for r in cells)
         n_ds = len({r['dataset'] for r in cells}); n_pr = len({(r['dataset'], r['preset']) for r in cells})
         groups = sorted({s['group'] for s in samples})
-        self.info.setText(f'{len(samples)} samples in {len(groups)} group(s) ({", ".join(groups)}); '
+        self.info.setToolTip('Groups: ' + ', '.join(groups))
+        self.info.setText(f'{len(samples)} samples in {len(groups)} group(s) ({group_list(groups)}); '
                           f'{n_ds} dataset(s), {n_pr} preset-dataset folder(s): '
                           f'{len(cells)} cells ({n_pos} green+, {len(cells) - n_pos} green−), {len(mito)} mito objects')
 

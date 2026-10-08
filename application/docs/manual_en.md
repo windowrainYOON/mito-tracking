@@ -295,11 +295,14 @@ Buttons at the top
 - *Control*: compare every group with the control (Mann-Whitney, Holm-adjusted); stars on the plot: `*` p<0.05, `**` p<0.01, `***` p<0.001.
 - *Groups shown*: which groups to show. *Table: this metric only*: limit the table to the current metric.
 - Table: n, mean, SD, SEM, 95 % CI, median, quartiles and test p values per metric × group. Click a row to plot that metric.
+- *Export…* → **Plotted values (CSV)…**: only the dots in the plot. It follows the shown groups and the current Level / Cells / Unit. Columns: group, dataset, preset, sample, cell (or mito), green_status (n_rows when Unit = images) and the plotted metric only. Default file name `<metric>_<unit>.csv`. **Statistics table (CSV)…** writes the table below.
+- The plot always keeps a 4:3 shape and is sized to the window. With many groups, the prefix shared by all names (e.g. `Condition_`) is dropped and long names are shortened in the middle (`…`) so labels do not overlap. The full names are in the table.
 
 ### 11-3. Groups: correlation
 ![Groups: correlation](manual_img/10_groups_corr.png)
 - *Mode* **A vs B**: correlation heatmaps of groups A and B and their difference (B − A), with `*` / `**` where the correlations differ (Fisher z test). ◀ ▶ steps group B through the groups.
 - *Mode* **All groups**: one small heatmap per group and a map of where the correlation differs between groups (Cochran's Q).
+- The plot keeps a 4:3 shape. A vs B: A and B on top, Δ and the list of column (X) metrics below. With many groups the small heatmaps are laid out on a grid that fits 4:3.
 - Below: the pairs with the largest differences, and how many squares reach p<0.05 compared with the number expected by chance.
 
 ### 11-4. Cells / Mito objects (all samples)

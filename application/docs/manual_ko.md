@@ -287,11 +287,14 @@ Options의 **Review and edit the cell ROIs before the analysis** (기본: 켜짐
 - *Control*: 대조군을 고르면 각 그룹을 대조군과 비교하고 (Mann-Whitney, Holm 보정) 그래프에 `*` p<0.05, `**` p<0.01, `***` p<0.001.
 - *Groups shown*: 보여줄 그룹 선택. *Table: this metric only*: 표에 지금 지표만.
 - 아래 표: 지표 × 그룹마다 n, 평균, SD, SEM, 95 % CI, 중앙값, 사분위, 검정 p 값. 줄을 누르면 그 지표가 그래프에 나옵니다.
+- *Export…* → **Plotted values (CSV)…**: 지금 그래프에 찍힌 점만 내보냅니다. 보이는 그룹과 현재 Level / Cells / Unit 설정을 따르고, 열은 group, dataset, preset, sample, cell(또는 mito), green_status(Unit = images이면 n_rows)와 그래프의 지표 하나뿐입니다. 파일 이름 기본값은 `<지표>_<단위>.csv`. **Statistics table (CSV)…** 는 아래 표를 내보냅니다.
+- 그래프는 항상 4:3 비율로 창 크기에 맞춰집니다. 그룹이 많으면 이름의 공통 앞부분(예: `Condition_`)을 빼고 가운데를 `…` 로 줄여 글자가 겹치지 않게 합니다. 전체 이름은 아래 표에 있습니다.
 
 ### 11-3. Groups: correlation
 ![Groups: correlation](manual_img/10_groups_corr.png)
 - *Mode* **A vs B**: 그룹 A, B의 상관 히트맵과 차이(B − A). 차이가 유의하면 `*`/`**` (Fisher z 검정). ◀ ▶ 로 B를 차례로 바꿉니다.
 - *Mode* **All groups**: 그룹마다 작은 히트맵 + "그룹마다 상관이 다른 칸" 지도 (Cochran's Q).
+- 그래프 창은 4:3 비율을 유지합니다. A vs B는 위에 A·B, 아래에 Δ와 열(X) 지표 목록. 그룹이 많으면 작은 히트맵을 4:3에 맞는 격자로 배치합니다.
 - 아래에 차이가 큰 쌍 목록과 "몇 칸 중 몇 칸이 p<0.05 (우연 기대 수)" 가 나옵니다.
 
 ### 11-4. Cells / Mito objects (all samples)
