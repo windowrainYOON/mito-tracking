@@ -62,5 +62,6 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
    - **여러 그룹 분석**: 대조군 선택(각 그룹 vs 대조군), 보여줄 그룹 선택, 모든 그룹 상관 히트맵 + Cochran's Q 검정.
 6. **픽셀 크기**: TIFF의 OME / ImageJ unit / ResolutionUnit 정보에서 µm/px를 읽습니다. 없으면 표에 빨간 `?`로 표시되고, Run all 때 값을 물어봅니다 (칸을 더블클릭해 직접 입력 가능).
 7. **임계값 수동 조정**: Options → *Thresholds* 에서 핵, 세포 영역, 미토콘드리아, 밝은 green, puncta 임계값을 자동 또는 수동(모든 이미지 일괄)으로 정합니다. *Preview / adjust thresholds…* 에서 슬라이더를 움직이며 마스크를 바로 보고, 모든 이미지 또는 그 이미지에만 적용할 수 있습니다.
+8. **세포 ROI 검토·수정**: 기본으로 Run all이 세포 ROI를 찾은 뒤 멈추고 검토 창을 엽니다. 선택·더하기·빼기·새 세포 그리기·삭제·합치기·되돌리기로 고친 뒤 확정하면 그 ROI로 분석이 이어집니다.
 
 설명 PDF 는 `cd application && .venv/bin/python tools/make_algorithm_pdf.py RED.tif GREEN.tif BLUE.tif -o docs/Mito_Analyzer_algorithm.pdf` 로 현재 코드 기준으로 다시 만들 수 있습니다.

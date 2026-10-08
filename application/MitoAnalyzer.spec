@@ -18,5 +18,5 @@ exe = EXE(pyz, a.scripts, [], exclude_binaries=True, name='MitoAnalyzer', consol
           argv_emulation=False, target_arch=None, icon='resources/icon.ico')
 coll = COLLECT(exe, a.binaries, a.datas, name='MitoAnalyzer')
 app = BUNDLE(coll, name='Mito Analyzer.app', icon='resources/icon.icns', bundle_identifier='com.mitotracking.mitoanalyzer',
-             info_plist={'NSHighResolutionCapable': True, 'CFBundleShortVersionString': '1.1.1',
+             info_plist={'NSHighResolutionCapable': True, 'CFBundleShortVersionString': '1.2.0',
                          'NSRequiresAquaSystemAppearance': False})

@@ -69,24 +69,35 @@ class Worker(QObject):
     job_failed = Signal(int, str)
     finished = Signal(int, int)
 
-    def __init__(self, jobs, params, base_out=''):
+    def __init__(self, jobs, params, base_out='', mode='analyse'):
         super().__init__()
-        self.jobs, self.params, self.base_out = jobs, params, base_out
+        self.jobs, self.params, self.base_out, self.mode = jobs, params, base_out, mode
         self.stop = False
 
     def run(self):
         results, failed = [], 0
+        detect = self.mode == 'detect'
         for n, (row, job) in enumerate(self.jobs, 1):
             if self.stop:
                 break
             self.started.emit(row)
-            self.log.emit(f'=== [{n}/{len(self.jobs)}] {job["dataset"]} / {job["name"]} ===')
+            self.log.emit(f'=== [{n}/{len(self.jobs)}] {job["dataset"]} / {job["name"]}'
+                          + (' (cell ROIs for review) ===' if detect else ' ==='))
             try:
                 ov = dict(job.get('overrides') or {})
                 if job.get('px') and not job.get('px_tiff') and not self.params.pixel_size_um:  # entered per image
                     ov['pixel_size_um'] = job['px']
-                res = pipeline.run(job['red'], job['green'], job['blue'], job['outdir'], self.params, job['name'],
-                                   log=self.log.emit, overrides=ov)
+                if detect:
+                    res = pipeline.detect_rois(job['red'], job['green'], job['blue'], self.params, log=self.log.emit,
+                                               overrides=ov)
+                    if job.get('roi_start'):   # start from the ROIs reviewed in an earlier run
+                        start = job['roi_start']
+                        if np.shape(start['labels']) == res['labels'].shape:
+                            res.update(labels=start['labels'], nuclei=start['nuclei'], seed=start['seed'])
+                            self.log.emit('     starting from the ROIs reviewed in an earlier run')
+                else:
+                    res = pipeline.run(job['red'], job['green'], job['blue'], job['outdir'], self.params, job['name'],
+                                       log=self.log.emit, overrides=ov, roi_edit=job.get('roi_edit'))
                 results.append(res)
                 self.job_done.emit(row, res)
             except Exception as e:  # report to the user instead of crashing the app
@@ -94,6 +105,9 @@ class Worker(QObject):
                 self.log.emit(traceback.format_exc())
                 self.job_failed.emit(row, f'{type(e).__name__}: {e}')
         try:
+            if detect:
+                self.finished.emit(len(results), failed)
+                return
             pipeline.write_group_tables(results)
             if results and self.base_out:
                 pipeline.write_group_exports(self.base_out, log=self.log.emit)
@@ -1504,6 +1518,7 @@ class MainWindow(QMainWindow):
         self.thread = self.worker = None
         self.result = None
         self.base_out = ''
+        self._mode = 'analyse'; self._review = None
 
         # inputs: one row per image set (red/green/blue of the same field)
         inp = QGroupBox('Image sets')
@@ -1554,6 +1569,12 @@ class MainWindow(QMainWindow):
                                     '(< 0.75 of the dimmer peak) and narrow (shorter than the thinner width), '
                                     'with a 1-px gap, before MiNA. MiNA classic uses one Otsu threshold per cell.')
         self.excl_binuc = QCheckBox('Exclude cells that share a weak border (look binucleate)')
+        self.review_rois = QCheckBox('Review and edit the cell ROIs before the analysis (pause after ROI detection)')
+        self.review_rois.setChecked(True)
+        self.review_rois.setToolTip('Run all first finds the cell ROIs of every image set, then opens a window where you '
+                                    'check them and fix them by hand (add, subtract, draw, delete, merge). The analysis '
+                                    'continues with the ROIs you confirm; they are saved with the results and offered '
+                                    'again the next time you run the same images.')
         self.trim_edge = QCheckBox('Keep cells whose tip touches the border (cut the tip off at a mito-free line)')
         self.trim_edge.setChecked(True)
         self.trim_edge.setToolTip('A cell whose nucleus is well inside the image but whose ROI reaches the border '
@@ -1582,6 +1603,7 @@ class MainWindow(QMainWindow):
                                     'A cell is green-positive when bright green covers at least this share of its '
                                     'cytoplasm (cell minus nucleus)')
         of.addRow('Mito segmentation', self.mito_method)
+        of.addRow(self.review_rois)
         of.addRow(self.excl_binuc); of.addRow(self.trim_edge); of.addRow(self.incl_edge)
         of.addRow('Minimum cell area', self.min_area)
         of.addRow('Weak-border threshold', self.binuc_tau)
@@ -1847,17 +1869,35 @@ class MainWindow(QMainWindow):
                                  mito_method=self.mito_method.currentData(),
                                  green_pos_percent=self.green_pos.value(), dim_nuclei=self.dim_nuclei.isChecked(),
                                  nuclei_method=self.nuclei_method.currentData(), **self.threshold_values())
-        for r in range(n):
-            self.table.set_status(r, 'queued')
         self.logbox.clear()
+        if self.review_rois.isChecked():
+            saved = {i: pipeline.read_roi_edit(j['outdir'], j['name']) for i, j in enumerate(jobs)}
+            saved = {i: s for i, s in saved.items() if s is not None}
+            if saved and QMessageBox.question(
+                    self, 'Review cell ROIs', f'ROIs you reviewed in an earlier run were found for {len(saved)} of the '
+                    f'{n} image set(s). Start from them?\n(No: start from newly detected ROIs.)') == QMessageBox.Yes:
+                for i, s in saved.items():
+                    jobs[i]['roi_start'] = s
+            self._review = dict(jobs=jobs, params=params, items={})
+            self._launch(jobs, params, 'detect')
+        else:
+            self._launch(jobs, params, 'analyse')
+
+    def _launch(self, jobs, params, mode):
+        """Run `jobs` in the worker thread: 'detect' = cell ROIs for review, 'analyse' = the full analysis."""
+        self._mode = mode
+        for r in range(len(jobs)):
+            self.table.set_status(r, 'queued')
         self.set_running(True)
-        self.statusBar().showMessage(f'Running {n} image set(s)…')
+        self.statusBar().showMessage(f'Finding cell ROIs in {len(jobs)} image set(s) for review…' if mode == 'detect'
+                                     else f'Running {len(jobs)} image set(s)…')
         self.thread = QThread()
-        self.worker = Worker(list(enumerate(jobs)), params, self.base_out)
+        self.worker = Worker(list(enumerate(jobs)), params, self.base_out, mode)
         self.worker.moveToThread(self.thread)
         self.thread.started.connect(self.worker.run)
         self.worker.log.connect(self.logbox.appendPlainText)
-        self.worker.started.connect(lambda r: (self.table.set_status(r, 'running…'), self.table.selectRow(r)))
+        self.worker.started.connect(lambda r: (self.table.set_status(r, 'ROIs…' if mode == 'detect' else 'running…'),
+                                               self.table.selectRow(r)))
         self.worker.job_done.connect(self.job_done)
         self.worker.job_failed.connect(lambda r, msg: self.table.set_status(r, 'failed', tip=msg))
         self.worker.finished.connect(self.done)
@@ -1907,11 +1947,19 @@ class MainWindow(QMainWindow):
         self.run_btn.setText('Stop' if on else 'Run all'); self.run_btn.setEnabled(True)
 
     def job_done(self, r, res):
+        if self._mode == 'detect':
+            self._review['items'][r] = res
+            self.table.set_status(r, f"{int(len(np.unique(res['labels'])) - 1)} ROIs to review")
+            return
         self.table.set_status(r, f"{len(res['rows'])} cells", res, res['outdir'])
         self.open_btn.setEnabled(True)
         self.show_result(res)
 
     def done(self, ok, failed):
+        if self._mode == 'detect':
+            self.thread.quit(); self.thread.wait()   # the review window opens only once the worker has stopped
+            self.review_and_continue(failed)
+            return
         self.set_running(False)
         for r in range(self.table.rowCount()):
             if self.table.text(r, JobTable.STATUS) == 'queued':
@@ -1923,6 +1971,54 @@ class MainWindow(QMainWindow):
         if failed:
             QMessageBox.warning(self, 'Some sets failed', f'{failed} image set(s) failed; hover the status cell '
                                 'or see the log for details.')
+
+    def review_and_continue(self, failed):
+        """After ROI detection: open the review window, then analyse with the confirmed ROIs."""
+        from .roi_review import RoiReviewDialog
+        rv = self._review; jobs = rv['jobs']
+        rows = sorted(rv['items'])
+        if self.worker.stop or not rows:
+            self.set_running(False)
+            for r in range(self.table.rowCount()):
+                if self.table.text(r, JobTable.STATUS) in ('queued',) or 'ROIs' in self.table.text(r, JobTable.STATUS):
+                    self.table.set_status(r, 'stopped')
+            self.statusBar().showMessage('Stopped before the analysis.' if rows else 'No cell ROIs found.')
+            return
+        self.statusBar().showMessage('Review the cell ROIs, then confirm to continue the analysis.')
+        dlg = RoiReviewDialog([dict(name=f"{jobs[r]['group']} / {jobs[r]['name']}", review=rv['items'][r])
+                               for r in rows], self)
+        if dlg.exec() != QDialog.Accepted:
+            self.set_running(False)
+            for r in rows:
+                self.table.set_status(r, 'ROIs not confirmed')
+            self.statusBar().showMessage('Analysis cancelled at the ROI review. Press Run all to start again.')
+            return
+        todo = []
+        for r, edit in zip(rows, dlg.results()):
+            jobs[r]['roi_edit'] = edit
+            todo.append(jobs[r])
+        if failed:
+            self.logbox.appendPlainText(f'{failed} image set(s) failed at ROI detection and are skipped.')
+        self._launch_rows(rows, todo, rv['params'])
+
+    def _launch_rows(self, rows, jobs, params):
+        """Analyse the reviewed rows (keeping their row numbers for the table)."""
+        self._mode = 'analyse'
+        for r in rows:
+            self.table.set_status(r, 'queued')
+        self.set_running(True)
+        self.statusBar().showMessage(f'Running {len(jobs)} image set(s) with the reviewed ROIs…')
+        self.thread = QThread()
+        self.worker = Worker(list(zip(rows, jobs)), params, self.base_out, 'analyse')
+        self.worker.moveToThread(self.thread)
+        self.thread.started.connect(self.worker.run)
+        self.worker.log.connect(self.logbox.appendPlainText)
+        self.worker.started.connect(lambda r: (self.table.set_status(r, 'running…'), self.table.selectRow(r)))
+        self.worker.job_done.connect(self.job_done)
+        self.worker.job_failed.connect(lambda r, msg: self.table.set_status(r, 'failed', tip=msg))
+        self.worker.finished.connect(self.done)
+        self.worker.finished.connect(self.thread.quit)
+        self.thread.start()
 
     def show_result(self, res):
         if not res:

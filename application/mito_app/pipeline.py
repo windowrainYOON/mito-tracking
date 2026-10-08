@@ -338,15 +338,8 @@ def _as_rgb(a, g):
     return np.dstack([np.zeros_like(g8), g8, np.zeros_like(g8)])
 
 
-def run(red_path, green_path, blue_path, outdir, params=None, name=None, log=print, overrides=None):
-    """Run the full pipeline and write all outputs to `outdir`. Returns a dict of results and file paths.
-    `overrides`: per-image Params values (e.g. {'pixel_size_um': 0.1, 'thr_mito': 40}) on top of `params`."""
-    p = params or Params()
-    if overrides:
-        p = replace(p, **{k: v for k, v in overrides.items() if k in PARAM_FIELDS})
-    name = name or sample_name(red_path)
-    os.makedirs(outdir, exist_ok=True)
-
+def _cell_stage(red_path, green_path, blue_path, p, log):
+    """Steps 1-2: load the images, find the nuclei and the cell ROIs (before any manual edit)."""
     log('1/5  Loading images')
     a, g, px = cell_roi.load_green(green_path)
     px_source = 'CZI' if imgio.is_czi(imgio.split_ref(green_path)[0]) else 'TIFF'
@@ -388,13 +381,79 @@ def run(red_path, green_path, blue_path, outdir, params=None, name=None, log=pri
         res['trimmed'] = (lab0 > 0) & (res['labels'] == 0)
         if trimmed:
             log(f'     {len(trimmed)} cells at the frame kept by cutting their tip off along a mito-free line')
+    return dict(a=a, g=g, gn=gn, norm=norm, px=px, px_source=px_source, k=k, nuc_img=nuc_img, nuc=nuc,
+                ninfo=ninfo, n_focus=n_focus, red=red, green=green, res=res, morph=morph, trimmed=trimmed)
+
+
+def review_image(st):
+    """RGB uint8 image for the ROI review: mito (red), green, nuclei (blue), each auto-contrasted."""
+    def nz(x, p=99.5):
+        x = x.astype(float)
+        return np.clip(x / max(np.percentile(x, p), 1e-9), 0, 1) ** 0.7
+    return (np.dstack([nz(st['red']), nz(st['gn']) * 0.8, nz(st['nuc_img'])]) * 255).astype(np.uint8)
+
+
+def detect_rois(red_path, green_path, blue_path, params=None, log=print, overrides=None):
+    """Cell ROIs of one image set for manual review, without the rest of the analysis.
+    Returns dict(labels, nuclei, seed, image, px): `nuclei` is labelled with the cell it belongs to and `seed`
+    maps every label to 'nucleus' or 'dim nucleus'."""
+    p = params or Params()
+    if overrides:
+        p = replace(p, **{k: v for k, v in overrides.items() if k in PARAM_FIELDS})
+    st = _cell_stage(red_path, green_path, blue_path, p, log)
+    lab = st['res']['labels'].astype(np.int32)
+    nucl = np.where(lab > 0, st['nuc'], 0).astype(np.int32)
+    seed = {int(l): 'dim nucleus' if l > st['n_focus'] else 'nucleus' for l in np.unique(lab) if l > 0}
+    return dict(labels=lab, nuclei=nucl, seed=seed, image=review_image(st), px=st['px'])
+
+
+def _apply_roi_edit(st, edit, log):
+    """Replace the detected cell ROIs by the reviewed ones (labels renumbered 1..n)."""
+    old = np.asarray(edit['labels']).astype(np.int64)
+    ids = [int(i) for i in np.unique(old) if i > 0]
+    lut = np.zeros(max(ids + [0]) + 1, np.int32)
+    for new, o in enumerate(ids, 1):
+        lut[o] = new
+    lab = lut[old]
+    nuc = np.asarray(edit['nuclei']).astype(np.int64)
+    nuc = np.where((nuc > 0) & (nuc < len(lut)), lut[np.clip(nuc, 0, len(lut) - 1)], 0)
+    nuc = np.where(nuc == lab, nuc, 0).astype(np.int32)    # a nucleus belongs to its own cell only
+    seed = {int(lut[int(o)]): s for o, s in edit.get('seed', {}).items() if 0 < int(o) < len(lut) and lut[int(o)]}
+    st['res']['labels'] = lab
+    st['res']['nuclei'] = nuc
+    st['res']['trimmed'] = None
+    st['nuc'] = nuc
+    st['trimmed'] = {}
+    st['seed'] = {int(l): seed.get(int(l), 'manual') for l in np.unique(lab) if l > 0}
+    log(f'     reviewed cell ROIs used: {int(lab.max())} cells ('
+        f"{sum(s == 'manual' for s in st['seed'].values())} drawn by hand)")
+
+
+def run(red_path, green_path, blue_path, outdir, params=None, name=None, log=print, overrides=None, roi_edit=None):
+    """Run the full pipeline and write all outputs to `outdir`. Returns a dict of results and file paths.
+    `overrides`: per-image Params values (e.g. {'pixel_size_um': 0.1, 'thr_mito': 40}) on top of `params`.
+    `roi_edit`: reviewed cell ROIs from detect_rois (labels, nuclei, seed), used instead of the detected ones."""
+    p = params or Params()
+    if overrides:
+        p = replace(p, **{k: v for k, v in overrides.items() if k in PARAM_FIELDS})
+    name = name or sample_name(red_path)
+    os.makedirs(outdir, exist_ok=True)
+    st = _cell_stage(red_path, green_path, blue_path, p, log)
+    if roi_edit is not None:
+        _apply_roi_edit(st, roi_edit, log)
+        write_roi_edit(outdir, name, roi_edit)
+    a, g, gn, norm, px, px_source, k = (st[x] for x in ('a', 'g', 'gn', 'norm', 'px', 'px_source', 'k'))
+    nuc_img, nuc, ninfo, n_focus, red, green = (st[x] for x in ('nuc_img', 'nuc', 'ninfo', 'n_focus', 'red', 'green'))
+    res, morph, trimmed = st['res'], st['morph'], st['trimmed']
+    seed = st.get('seed')
     gstatus, ginfo = green_cells.classify(gn, res['labels'], nuc, k, p.green_pos_percent / 100, p.thr_green_bright)
     rois = cell_roi.save_outputs(a, gn, res, px, outdir, name, binuc_tau=p.binuc_tau,
                                  exclude_binuc=p.exclude_binucleate)
     n_ok = sum(r['status'] == 'ok' for r in rois)
     for r in rois:
         r['green_status'] = gstatus[int(r['roi'][4:])]
-        r['seed'] = 'dim nucleus' if int(r['roi'][4:]) > n_focus else 'nucleus'
+        r['seed'] = seed.get(int(r['roi'][4:]), 'manual') if seed else (
+            'dim nucleus' if int(r['roi'][4:]) > n_focus else 'nucleus')
         r['edge_trimmed_um2'] = round(trimmed.get(int(r['roi'][4:]), 0) * px * px, 1)
     log(f'     {len(rois)} cell ROIs, {n_ok} pass QC (not touching the border'
         + (', not binucleate)' if p.exclude_binucleate else ')'))
@@ -458,7 +517,7 @@ def run(red_path, green_path, blue_path, outdir, params=None, name=None, log=pri
                  green_cells=os.path.join(outdir, f'{name}_green_cells.png'))
     cell_rows = merge_cell_rows(rois, rows)
     settings = dict(sample=name, red=red_path, green=green_path, blue=blue_path, pixel_size_um=px,
-                    pixel_size_source=px_source, green_background=norm['offset'], green_gain=norm['gain'],
+                    pixel_size_source=px_source, rois_reviewed=roi_edit is not None, green_background=norm['offset'], green_gain=norm['gain'],
                     nuclei_threshold=ninfo.get('threshold', float('nan')),
                     nuclei_threshold_auto=ninfo.get('threshold_auto', float('nan')),
                     cell_fg_level=p.cell_fg_level,
@@ -497,6 +556,27 @@ GREEN_GROUPS = (('positive', 'green_pos'), ('negative', 'green_neg'))
 
 
 PER_CELL_ROI_COLS = ('seed', 'edge_trimmed_um2', 'centroid_x', 'centroid_y', 'touches_border', 'weak_border_with')
+
+
+ROI_EDIT_SUFFIX = '_roi_review.npz'
+
+
+def write_roi_edit(outdir, name, edit):
+    """Keep the reviewed ROIs next to the results, so a later run can start from them."""
+    seed = edit.get('seed', {})
+    np.savez_compressed(os.path.join(outdir, name + ROI_EDIT_SUFFIX), labels=np.asarray(edit['labels'], np.int32),
+                        nuclei=np.asarray(edit['nuclei'], np.int32),
+                        seed_labels=np.array(list(seed.keys()), np.int32), seed_kinds=np.array(list(seed.values())))
+
+
+def read_roi_edit(outdir, name):
+    """Reviewed ROIs saved by an earlier run (or None)."""
+    f = os.path.join(outdir, name + ROI_EDIT_SUFFIX)
+    if not os.path.exists(f):
+        return None
+    d = np.load(f)
+    return dict(labels=d['labels'], nuclei=d['nuclei'],
+                seed={int(l): str(s) for l, s in zip(d['seed_labels'], d['seed_kinds'])})
 
 
 def merge_cell_rows(rois, rows):

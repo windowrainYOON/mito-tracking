@@ -13,6 +13,7 @@ The screenshots were made with synthetic example images.
 4. Your first analysis, step by step
 5. The Run tab
 6. Every option
+6-1. Reviewing and editing the cell ROIs
 7. Manual thresholds and the live preview
 8. Pixel size (µm/px)
 9. Groups
@@ -120,7 +121,9 @@ A `.czi` file from ZEN holds all channels of a field, so **one CZI file is one i
 4. **Choose the output folder.** Pick where the results go in *Output folder*. Left empty, a `dataset` folder is made in the common parent folder of your input folders.
    - Use a folder outside your raw-data folder.
 5. **Leave the options at their defaults** for the first run; they suit most images.
-6. **Press Run all.** Each image takes about 20–40 s. Progress shows in the *Log* and the *Status* column. The same button (**Stop**) finishes the current image and stops.
+6. **Press Run all.** Progress shows in the *Log* and the *Status* column. The same button (**Stop**) finishes the current image and stops.
+   - First only the **cell ROIs** of every image are found (10–15 s per image), then the **ROI review window** opens. Check the cells, fix them if needed and press **Confirm ROIs and continue analysis**; the rest of the analysis (about 20 s per image) follows. See section 6-1.
+   - To run everything automatically without the review, turn off *Review and edit the cell ROIs before the analysis* in Options.
 7. **Look at the results.** Click a finished row: its results appear in the tabs on the right (section 10).
    ![After the run](manual_img/05_after_run.png)
 8. **Check the Cell ROIs tab first.** Thick red outline = analysed cell, grey dotted = left out because it touches the image edge.
@@ -154,6 +157,7 @@ Editable table cells
 
 | Option | Default | What it does | When to change it |
 |---|---|---|---|
+| Review and edit the cell ROIs before the analysis | on | Stops after the cell ROIs are found and opens the review window (section 6-1) | turn off for a fully automatic run |
 | Mito segmentation | Split objects | How mitochondria are segmented. *Split objects*: local threshold, touching mitochondria split at dark, narrow contacts (adds fragmentation metrics). *MiNA classic*: one Otsu threshold per cell, as Fiji MiNA | MiNA classic only to compare with Fiji MiNA directly |
 | Exclude cells that share a weak border | off | Leaves out neighbouring cells without a clear border between them (look binucleate) | crowded cells with uncertain borders, for a conservative analysis |
 | Keep cells whose tip touches the border | on | A cell whose nucleus is well inside the image but whose tip reaches the edge is cut at the line where its mitochondria stop and analysed (the cut part is hatched) | turn off to leave such cells out entirely |
@@ -167,6 +171,44 @@ Editable table cells
 | Dim (out-of-focus) nuclei also get their own cell | on | Faint nuclei also get a cell, so their mitochondria are not given to a neighbour | almost always on |
 | Green+ cell: bright green ≥ | 2.0 % | A cell is green-positive (expressing) when bright green covers at least this share of its cytoplasm | lower for weak expression, raise with bright background |
 | Thresholds | all auto | The five thresholds, automatic or manual (section 7) | when the automatic result does not fit |
+
+## 6-1. Reviewing and editing the cell ROIs
+With **Review and edit the cell ROIs before the analysis** on (the default), Run all stops after finding the cell ROIs and opens this window. The rest of the analysis uses the ROIs you confirm here.
+
+![ROI review window](manual_img/12_roi_review.png)
+
+The window
+- Left: the image sets, `(analysed cells / all cells)`; ✓ = viewed, ✎ = edited
+- Centre: mito (red), green and nuclei (blue) with the cell outlines (white), nucleus outlines (light blue) and numbers
+  - **grey** outline and number = touches the image border and will not be analysed; `*` = drawn by hand; thick **yellow** = selected cell
+  - checkboxes switch channels, nucleus outlines and numbers on and off
+- Zoom / pan: mouse wheel, or the magnifier and hand icons (house = whole image)
+
+Tools (shortcut in brackets)
+| Tool | How |
+|---|---|
+| **Select (V)** | click a cell to select it; its area and seed (nucleus / dim nucleus / drawn) are shown below |
+| **Add (A)** | draw around an area to add to the selected cell; area of other cells is taken from them. It must touch the cell |
+| **Subtract (S)** | draw around an area to cut from the selected cell (from every cell it touches if none is selected). Draw across the cell border: a cell cannot have a hole |
+| **New cell (N)** | draw the outline of a missed cell (only where no other cell is) |
+| **Delete cell (Delete)** | delete the selected cell (fake cells, cells to leave out) |
+| **Merge… (M)** | select a cell, press Merge…, click the cell to join. For one cell split in two; the cells must touch |
+| **Undo / Redo** | ⌘Z / ⇧⌘Z |
+| **Reset image** | back to the detected ROIs of this image |
+| **Esc** | clear the selection, back to Select |
+
+Common fixes
+- **Two cells in one ROI** → Subtract one part, then draw it as a New cell.
+- **One cell split in two** → select one part → Merge… → click the other.
+- **Background attached to a cell** → select the cell, Subtract around the background.
+- **Fake cell** → select → Delete.
+- **Missed cell** → draw it with New cell (number with `*`, *seed* column = `manual`).
+
+Finishing
+- Step through the images with **◀ Previous / Next ▶**, then **Confirm ROIs and continue analysis**. If some images were not opened you are asked whether to go on with their detected ROIs.
+- **Cancel** stops without analysing (nothing is saved).
+- The confirmed ROIs are saved in each sample folder as `<sample>_roi_review.npz` and the settings sheet records `rois_reviewed = True`. Running the same images into the same output folder again asks **whether to start from the ROIs reviewed before** (Yes = load your edits, No = detect again).
+- Deleted or drawn cells go through the rest of the analysis (mitochondria, green, statistics) like any other cell.
 
 ## 7. Manual thresholds and the live preview
 Automatic thresholds are computed for every image. When the result looks wrong you can set them yourself.
@@ -318,7 +360,7 @@ Several runs into the same `-o` folder add up their groups, and the last run rew
 
 **µm/px shows `?`** → section 8: type the value, or enter it when Run all asks.
 
-**Two cells end up in one ROI** → usually one nucleus was not found. Lower *Nuclei* in the preview and make sure *Dim nuclei* is on.
+**Two cells end up in one ROI** → fix it directly in the ROI review window (section 6-1: Subtract + New cell). If it happens in many images, usually one nucleus was not found. Lower *Nuclei* in the preview and make sure *Dim nuclei* is on.
 
 **ROIs appear where there is no cell (fake cells)** → a smooth blue blob in the cytoplasm was taken for a nucleus. Raise *Nuclei*, or check that Nucleus detection is *Texture + merge*.
 

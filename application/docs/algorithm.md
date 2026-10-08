@@ -142,6 +142,13 @@ green ─► 1-2 자가형광 골짜기 (보조 경계) ────────
 - **weak_border_with**: 이웃 ROI와의 경계가 green 밀도 기준으로 어둡지 않으면(상대 대비 < 0.0) 목록에 남깁니다. *Exclude cells that share a weak border*를 켜면 이 세포들을 binucleate로 제외합니다.
 - ROI는 Fiji ROI Manager용 `_RoiSet.zip`(전부)과 `_RoiSet_filtered.zip`(QC 통과), 라벨 TIFF, `_rois.csv`, `_summary.png`로 저장됩니다.
 
+### 1-6b. 수동 검토 (옵션 *Review and edit the cell ROIs before the analysis*, 기본 켜짐)
+1-1~1-5로 찾은 ROI를 분석 전에 사용자가 확인·수정합니다 (`mito_app/roi_review.py`, `mito_app/roi_edit.py`).
+- 도구: 선택, 영역 더하기, 빼기, 새 세포 그리기, 삭제, 닿아 있는 두 세포 합치기, 되돌리기.
+- 세포는 항상 구멍 없는 한 덩어리로 유지됩니다. 편집으로 갈라지면 원래 세포(또는 핵)와 겹치는 조각만 남깁니다.
+- 확정하면 라벨을 1..n으로 다시 매기고, 핵 라벨도 같은 번호로 맞춘 뒤, 1-6 QC부터 이후 단계가 이 ROI로 진행됩니다. 손으로 그린 세포는 `seed = manual` (핵 없음).
+- 확정한 ROI는 `<sample>_roi_review.npz`로 저장되어 다음 실행에서 다시 불러올 수 있습니다.
+
 ### 1-7. ROI가 이상할 때 확인할 것
 | 증상 | 가능한 원인 | 조정 |
 |---|---|---|
