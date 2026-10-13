@@ -12,7 +12,7 @@ from dataclasses import asdict, dataclass, fields, replace
 
 import numpy as np
 
-from . import cell_roi, imgio, nuclei, green_cells, mina, mito_objects, stats
+from . import cell_roi, imgio, nuclei, green_cells, mina, mito_objects, roi_io, stats
 from . import green as green_q
 
 
@@ -429,16 +429,32 @@ def _apply_roi_edit(st, edit, log):
         f"{sum(s == 'manual' for s in st['seed'].values())} drawn by hand)")
 
 
-def run(red_path, green_path, blue_path, outdir, params=None, name=None, log=print, overrides=None, roi_edit=None):
+def import_rois(path, st_or_shape, detected_nuclei=None, log=print):
+    """Cell ROIs from a Cytosol Viewer RoiSet (.zip / .roi) in the form of reviewed ROIs (labels, nuclei, seed)."""
+    shape = st_or_shape['red'].shape if isinstance(st_or_shape, dict) else tuple(st_or_shape)
+    if isinstance(st_or_shape, dict) and detected_nuclei is None:
+        detected_nuclei = st_or_shape['nuc']
+    edit = roi_io.read_roiset(path, shape, detected_nuclei)
+    n = len(edit['seed'])
+    n_nuc = len(set(np.unique(edit['nuclei'])) - {0})
+    log(f'     cell ROIs imported from {os.path.basename(path)}: {n} cells, {n_nuc} with a nucleus')
+    return edit
+
+
+def run(red_path, green_path, blue_path, outdir, params=None, name=None, log=print, overrides=None, roi_edit=None,
+        roi_file=None):
     """Run the full pipeline and write all outputs to `outdir`. Returns a dict of results and file paths.
     `overrides`: per-image Params values (e.g. {'pixel_size_um': 0.1, 'thr_mito': 40}) on top of `params`.
-    `roi_edit`: reviewed cell ROIs from detect_rois (labels, nuclei, seed), used instead of the detected ones."""
+    `roi_edit`: reviewed cell ROIs from detect_rois (labels, nuclei, seed), used instead of the detected ones.
+    `roi_file`: Cytosol Viewer RoiSet (.zip / .roi) whose cell ROIs replace the detected ones (when no `roi_edit`)."""
     p = params or Params()
     if overrides:
         p = replace(p, **{k: v for k, v in overrides.items() if k in PARAM_FIELDS})
     name = name or sample_name(red_path)
     os.makedirs(outdir, exist_ok=True)
     st = _cell_stage(red_path, green_path, blue_path, p, log)
+    if roi_edit is None and roi_file:
+        roi_edit = import_rois(roi_file, st, log=log)
     if roi_edit is not None:
         _apply_roi_edit(st, roi_edit, log)
         write_roi_edit(outdir, name, roi_edit)
@@ -517,7 +533,7 @@ def run(red_path, green_path, blue_path, outdir, params=None, name=None, log=pri
                  green_cells=os.path.join(outdir, f'{name}_green_cells.png'))
     cell_rows = merge_cell_rows(rois, rows)
     settings = dict(sample=name, red=red_path, green=green_path, blue=blue_path, pixel_size_um=px,
-                    pixel_size_source=px_source, rois_reviewed=roi_edit is not None, green_background=norm['offset'], green_gain=norm['gain'],
+                    pixel_size_source=px_source, rois_reviewed=roi_edit is not None, roi_file=roi_file or '', green_background=norm['offset'], green_gain=norm['gain'],
                     nuclei_threshold=ninfo.get('threshold', float('nan')),
                     nuclei_threshold_auto=ninfo.get('threshold_auto', float('nan')),
                     cell_fg_level=p.cell_fg_level,
@@ -547,6 +563,9 @@ def run(red_path, green_path, blue_path, outdir, params=None, name=None, log=pri
     render_green(red, green, lab, mito_rows, b, mlab, plab, rows, files['green_overlay'])
     write_label_rois(mlab, 'm', files['mito_roiset'])
     write_label_rois(plab, 'p', files['puncta_roiset'])
+    nuc_used = (res['nuclei'] if res.get('nuclei') is not None else nuc) > 0
+    files['used_rois'] = roi_io.write_used_rois(outdir, name, lab, np.where(nuc_used, lab, 0), b,
+                                                [int(r['cell'][4:]) for r in rows], red)
     log(f'     Done. Results in {outdir}')
     return dict(name=name, outdir=outdir, rows=cell_rows, mito_rows=mito_rows, puncta_rows=puncta_rows,
                 correlations=corr, rois=rois, groups=groups, **files)

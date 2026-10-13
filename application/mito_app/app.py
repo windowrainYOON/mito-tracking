@@ -3,6 +3,7 @@
     python -m mito_app --cli RED.tif GREEN.tif BLUE.tif -o OUTDIR [--exclude-binucleate] [--include-edge-cells]
     python -m mito_app --cli --batch FOLDER_OR_TIFF [...] -o OUTDIR [--dataset NAME] [--preset NAME] [--group NAME]
     python -m mito_app --cli IMAGE.czi -o OUTDIR [--czi-channels mito=0,protein=1,nucleus=2]
+    ... --rois ROISET.zip | FOLDER     cell ROIs from Cytosol Viewer instead of the detected ones
 
 Batch mode groups the TIFFs (folders are searched recursively) into red/green/blue sets by file name and writes each set to
 OUTDIR/<dataset>/<preset>-<dataset>/<sample>/ (dataset defaults to the name of the folder given,
@@ -10,6 +11,9 @@ preset to the mito method). The group of each set (default: its dataset) goes to
 group-wise export (one folder per group + group_comparison.xlsx) to OUTDIR/groups/.
 A Zeiss .czi file is one set by itself; --czi-channels gives the channel (0-based) of each role for every CZI
 file of the run (default: guessed from the channel names, e.g. DAPI = nucleus, longest emission = mito).
+
+--rois takes one RoiSet .zip / .roi (single set) or files / folders of them (batch); each is matched to its image set
+by name ('New-01_RoiSet.zip' -> New-01). Sets without a matching file use the detected cell ROIs.
 
 Thresholds are automatic per image unless a manual value is given (one value for every image):
     --thr-nuclei, --cell-fg-level, --thr-mito, --thr-green-bright, --thr-puncta
@@ -28,6 +32,9 @@ def cli(argv):
     ap.add_argument('--czi-channels', default='',
                     help='CZI channel of each role for all CZI files, e.g. mito=0,protein=1,nucleus=2 '
                          '(default: guessed from the channel names)')
+    ap.add_argument('--rois', nargs='+', default=[],
+                    help='cell ROIs from Cytosol Viewer: RoiSet .zip / .roi files or folders, matched to the image sets '
+                         'by name (one file and one set: used as is)')
     ap.add_argument('--batch', action='store_true')
     ap.add_argument('--dataset'); ap.add_argument('--preset')
     ap.add_argument('--group', help='group of all sets in this batch (for the group comparison; default: the dataset)')
@@ -72,18 +79,33 @@ def cli(argv):
         roles = pipeline.imgio.parse_roles(A.czi_channels) if A.czi_channels else None
     except ValueError as e:
         ap.error(str(e))
+    roi_files = pipeline.roi_io.collect_roi_files(A.rois)
+    if A.rois and not roi_files:
+        ap.error('--rois: no .zip / .roi files found')
+
+    def one_roi(s):
+        if not roi_files:
+            return None
+        if len(roi_files) == 1:
+            return roi_files[0]
+        m, _ = pipeline.roi_io.match_roi_files(roi_files, [s])
+        if 0 not in m:
+            ap.error(f"--rois: no file matches {s['name']}")
+        return m[0]
+
     if not A.batch and len(A.inputs) == 1 and pipeline.imgio.is_czi(A.inputs[0]):
         sets, _ = pipeline.find_sets(A.inputs, roles)
         if not sets:
             ap.error(f'{A.inputs[0]}: cannot tell the channel roles; give --czi-channels')
         s = sets[0]
         print('channels: ' + ', '.join(f'{lab} = {pipeline.imgio.display_name(s[k])}' for k, lab in pipeline.imgio.ROLES))
-        pipeline.run(s['red'], s['green'], s['blue'], A.outdir, p, A.name or s['name'])
+        pipeline.run(s['red'], s['green'], s['blue'], A.outdir, p, A.name or s['name'], roi_file=one_roi(s))
         return 0
     if not A.batch:
         if len(A.inputs) != 3:
             ap.error('give RED GREEN BLUE, one .czi file, or use --batch')
-        pipeline.run(*A.inputs, A.outdir, p, A.name)
+        s = dict(red=A.inputs[0], green=A.inputs[1], blue=A.inputs[2], name=A.name or pipeline.sample_name(A.inputs[0]))
+        pipeline.run(*A.inputs, A.outdir, p, A.name, roi_file=one_roi(s))
         return 0
     sets, leftover = pipeline.find_sets(A.inputs, roles)
     for f in leftover:
@@ -97,6 +119,10 @@ def cli(argv):
             print(f'WARNING: {len(nopx)} image set(s) have no pixel size in the TIFF ({", ".join(nopx[:5])}'
                   f'{" …" if len(nopx) > 5 else ""}); they use {pipeline.cell_roi.REF_PX_UM} um/px. '
                   'Give --pixel-size-um if that is wrong.')
+    rmap, unmatched = pipeline.roi_io.match_roi_files(roi_files, sets)
+    if roi_files:
+        print(f'cell ROIs from Cytosol Viewer for {len(rmap)} of {len(sets)} image set(s)'
+              + (f'; not matched: {", ".join(os.path.basename(f) for f in unmatched)}' if unmatched else ''))
     results, failed = [], 0
     entries = [dict(outdir=pipeline.job_outdir(A.outdir, A.dataset or s['dataset'], A.preset or A.mito_method, s['name']),
                     dataset=A.dataset or s['dataset'], sample=s['name'], group=A.group or A.dataset or s['dataset'])
@@ -108,7 +134,7 @@ def cli(argv):
         out = e['outdir']
         print(f'[{n}/{len(sets)}] {name} -> {out}')
         try:
-            results.append(pipeline.run(s['red'], s['green'], s['blue'], out, p, name))
+            results.append(pipeline.run(s['red'], s['green'], s['blue'], out, p, name, roi_file=rmap.get(n - 1)))
         except Exception as e:
             failed += 1
             print(f'     FAILED: {type(e).__name__}: {e}')

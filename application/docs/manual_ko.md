@@ -14,6 +14,7 @@ English version: [manual_en.md](manual_en.md)
 5. 화면 구성: Run 탭
 6. 옵션 하나하나
 6-1. 세포 ROI 검토와 수정
+6-2. Cytosol Viewer에서 만든 세포 ROI 쓰기
 7. 임계값 수동 조정과 미리보기
 8. 픽셀 크기 (µm/px)
 9. 그룹 만들기
@@ -202,6 +203,20 @@ Options의 **Review and edit the cell ROIs before the analysis** (기본: 켜짐
 - 확정한 ROI는 각 샘플 폴더에 `<sample>_roi_review.npz` 로 저장되고, settings 시트에 `rois_reviewed = True` 로 기록됩니다. 같은 이미지를 같은 출력 폴더로 다시 돌리면 **"이전에 검토한 ROI에서 시작할까요?"** 라고 묻습니다 (Yes = 이전 수정 그대로 불러옴, No = 새로 검출).
 - 세포를 지우거나 그린 경우에도 나머지 계산(미토, green, 통계)은 확정한 ROI 기준으로 똑같이 이루어집니다.
 
+## 6-2. Cytosol Viewer에서 만든 세포 ROI 쓰기
+세포 ROI를 Cytosol Viewer(cytosol-analysis)에서 이미 만들어 두었다면, 앱이 찾는 대신 그 ROI로 분석할 수 있습니다.
+
+1. Cytosol Viewer의 **세포질 ROI** 탭에서 **모든 이미지 ROI 저장 (폴더)…** 로 이미지마다 `<이미지>_RoiSet.zip` 을 저장합니다. 그 안에 세포(`cellNNN`), 핵(`nucNNN`), 세포질(`cytoNNN`) ROI가 들어 있습니다. `.roi` 파일 하나도 됩니다.
+2. Mito Analyzer에 이미지를 넣은 뒤 **Cell ROI files…** 로 zip 파일들을 고르거나, zip 파일이나 그 폴더를 표에 끌어다 놓습니다.
+3. 파일 이름으로 이미지와 짝지어집니다 (`New-01_RoiSet.zip` → `New-01.czi`, `Processed_New01_…` 와 `New01_RoiSet.zip` 처럼 한쪽 이름이 다른 쪽 끝과 같아도 됨). 짝지어진 줄은 **Cell ROIs** 열에 파일 이름이 초록색으로 표시되고, 없는 줄은 `detect`(앱이 찾음)입니다.
+4. 짝이 안 맞으면 그 줄의 **Cell ROIs** 칸을 더블클릭해 직접 고릅니다. 같은 칸에서 **Detect them instead** 를 누르면 다시 앱이 찾습니다.
+
+- 세포 ROI가 세포 영역, 핵 ROI가 핵으로 쓰입니다. 세포 ROI 없이 세포질 ROI만 있으면 세포질의 바깥 경계가 세포, 안쪽 구멍이 핵입니다.
+- 핵 ROI가 없는 세포는 파란 채널에서 찾은 핵 중 그 세포 안에 있는 것을 씁니다.
+- **Review and edit the cell ROIs** 가 켜져 있으면 불러온 ROI가 검토 창에 먼저 나오므로 그대로 확인하거나 고칠 수 있습니다.
+- 가장자리 세포 제외, 이핵 세포 제외 같은 옵션은 불러온 ROI에도 똑같이 적용됩니다. 표의 *seed* 열은 `imported`, settings 시트의 *roi_file* 에 사용한 파일이 기록됩니다.
+- 이미지 크기와 ROI 좌표가 맞아야 합니다 (같은 원본 이미지에서 만든 ROI).
+
 ## 7. 임계값 수동 조정과 미리보기
 자동 임계값은 이미지마다 계산됩니다. 결과가 이상하면 직접 정할 수 있습니다.
 
@@ -319,6 +334,11 @@ Options의 **Review and edit the cell ROIs before the analysis** (기본: 켜짐
       <sample>_RoiSet.zip            Fiji ROI Manager용 세포·핵 ROI (_RoiSet_filtered.zip = 분석 세포만)
       <sample>_mito_RoiSet.zip, _green_puncta_RoiSet.zip
       <sample>_summary.png, _green_cells.png, _green_on_mito.png, _mina_overlay.png …  확인용 그림
+      <sample>_used_ROIs/            분석에 실제로 쓴 ROI (분석 세포만)
+        <sample>_cell_RoiSet.zip     세포 cellNNN / 핵 nucNNN / 세포질 cytoNNN (Fiji, Cytosol Viewer에서 열기, 다시 불러오기 가능)
+        <sample>_mito_RoiSet.zip     계산에 쓴 미토 영역 (cellNNN_mNNN, 세포별)
+        <sample>_cell_labels.tif, _cytosol_labels.tif, _nuclei_labels.tif, _mito_labels.tif   픽셀 값 = 세포 번호
+        <sample>_used_rois.png       빨강 미토 위에 세포(흰색)·핵(하늘색)·미토(분홍) 윤곽
 ```
 - Excel에서 보려면 `_results.xlsx` 또는 `groups/group_comparison.xlsx` 를 여세요.
 - Fiji에서 ROI 확인: 원본 이미지를 열고 `_RoiSet.zip` 을 Fiji 창에 끌어다 놓으면 ROI Manager에 들어갑니다.
@@ -342,6 +362,10 @@ Options의 **Review and edit the cell ROIs before the analysis** (기본: 켜짐
 cd mito-tracking/application && .venv/bin/python run_app.py --cli --batch 폴더 -o 출력폴더
 # CZI 파일 (파일 하나, 또는 --batch 로 폴더). 추정한 채널 역할이 틀리면 직접 지정
 "/Applications/Mito Analyzer.app/Contents/MacOS/MitoAnalyzer" --cli --batch CZI폴더 -o ~/results --czi-channels mito=0,protein=1,nucleus=2
+```
+Cytosol Viewer ROI로 분석: `--rois ROI폴더` (또는 zip 파일들). 이미지 이름으로 짝지어지고, 짝이 없는 이미지는 앱이 ROI를 찾습니다.
+```bash
+"/Applications/Mito Analyzer.app/Contents/MacOS/MitoAnalyzer" --cli --batch CZI폴더 -o ~/results --rois ~/rois
 ```
 자주 쓰는 옵션: `--group 이름`, `--control 대조군`, `--pixel-size-um 0.099`, `--thr-nuclei`, `--cell-fg-level`, `--thr-mito`, `--thr-green-bright`, `--thr-puncta` (0 = 자동), `--mito-method otsu`, `--no-edge-trim`, `--include-edge-cells`, `--green-pos-percent 2`. 전체 목록: `--cli --help`.
 같은 `-o` 폴더에 여러 번 돌리면 그룹이 합쳐지고, 마지막 실행 때 `groups/` 비교표가 다시 만들어집니다.

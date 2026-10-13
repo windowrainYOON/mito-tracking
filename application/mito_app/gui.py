@@ -15,8 +15,9 @@ from PySide6.QtWidgets import (
     QSplitter, QTableView, QTableWidget, QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget,
 )
 
-from . import __version__, imgio, nuclei, pipeline, stats
+from . import __version__, imgio, nuclei, pipeline, roi_io, stats
 
+ROI_FILTER = 'ImageJ ROIs from Cytosol Viewer (*.zip *.roi);;All files (*)'
 TIFF_FILTER = 'Images (*.tif *.tiff *.czi);;TIFF images (*.tif *.tiff);;Zeiss CZI (*.czi);;All files (*)'
 GREEN_COLORS = {'positive': '#2CA02C', 'negative': '#7F7F7F'}
 CELL_COLORS = ['#4C9BE8', '#F28E2B', '#59A14F', '#E15759', '#B07AA1', '#EDC948', '#76B7B2', '#FF9DA7',
@@ -129,14 +130,17 @@ class Worker(QObject):
                 if detect:
                     res = pipeline.detect_rois(job['red'], job['green'], job['blue'], self.params, log=self.log.emit,
                                                overrides=ov)
-                    if job.get('roi_start'):   # start from the ROIs reviewed in an earlier run
-                        start = job['roi_start']
-                        if np.shape(start['labels']) == res['labels'].shape:
-                            res.update(labels=start['labels'], nuclei=start['nuclei'], seed=start['seed'])
-                            self.log.emit('     starting from the ROIs reviewed in an earlier run')
+                    start = job.get('roi_start')   # ROIs reviewed in an earlier run
+                    if start is not None and np.shape(start['labels']) == res['labels'].shape:
+                        res.update(labels=start['labels'], nuclei=start['nuclei'], seed=start['seed'])
+                        self.log.emit('     starting from the ROIs reviewed in an earlier run')
+                    elif job.get('roi_file'):     # cell ROIs from Cytosol Viewer
+                        res.update(pipeline.import_rois(job['roi_file'], res['labels'].shape, res['nuclei'],
+                                                        log=self.log.emit))
                 else:
                     res = pipeline.run(job['red'], job['green'], job['blue'], job['outdir'], self.params, job['name'],
-                                       log=self.log.emit, overrides=ov, roi_edit=job.get('roi_edit'))
+                                       log=self.log.emit, overrides=ov, roi_edit=job.get('roi_edit'),
+                                       roi_file=job.get('roi_file'))
                 results.append(res)
                 self.job_done.emit(row, res)
             except Exception as e:  # report to the user instead of crashing the app
@@ -158,8 +162,8 @@ class Worker(QObject):
 class JobTable(QTableWidget):
     """Input table, one image set per row (three TIFFs, or one CZI file with a channel per role).
     Accepts dropped TIFFs / CZIs / folders."""
-    COLS = ('Group', 'Dataset', 'Preset', 'Sample', 'µm/px', 'Red', 'Green', 'Blue', 'Thresholds', 'Status')
-    GROUP, DATASET, PRESET, NAME, PX, RED, GREEN, BLUE, THR, STATUS = range(10)
+    COLS = ('Group', 'Dataset', 'Preset', 'Sample', 'µm/px', 'Red', 'Green', 'Blue', 'Thresholds', 'Cell ROIs', 'Status')
+    GROUP, DATASET, PRESET, NAME, PX, RED, GREEN, BLUE, THR, ROI, STATUS = range(11)
     CH_COL = {'red': 5, 'green': 6, 'blue': 7}
     dropped = Signal(list)
 
@@ -172,7 +176,7 @@ class JobTable(QTableWidget):
         self.setAlternatingRowColors(True)
         self.verticalHeader().setDefaultSectionSize(22)
         h = self.horizontalHeader(); h.setSectionResizeMode(QHeaderView.Interactive); h.setStretchLastSection(True)
-        for c, w in zip(range(10), (70, 70, 50, 80, 58, 84, 84, 84, 70, 60)):
+        for c, w in zip(range(11), (70, 70, 50, 80, 58, 84, 84, 84, 70, 84, 60)):
             self.setColumnWidth(c, w)
         self.setAcceptDrops(True)
 
@@ -209,6 +213,7 @@ class JobTable(QTableWidget):
         th = QTableWidgetItem('auto'); th.setFlags(th.flags() & ~Qt.ItemIsEditable); th.setData(Qt.UserRole, {})
         th.setToolTip('Per-image manual thresholds (set them in Thresholds → Preview / adjust…, "This image only")')
         self.setItem(r, self.THR, th)
+        self.set_roi_file(r, None)
         st = QTableWidgetItem('ready'); st.setFlags(st.flags() & ~Qt.ItemIsEditable)
         self.setItem(r, self.STATUS, st)
 
@@ -248,6 +253,21 @@ class JobTable(QTableWidget):
         it.setToolTip('This image uses: ' + (', '.join(f'{labels[k]} = {v:g}' for k, v in d.items()) or
                                              'the Options thresholds') + '. Change it in Thresholds → Preview / adjust…')
 
+    def roi_file(self, r):
+        it = self.item(r, self.ROI)
+        return it.data(Qt.UserRole) if it else None
+
+    def set_roi_file(self, r, path):
+        """Cell ROIs of row r: a Cytosol Viewer RoiSet (.zip / .roi), or None = detect them."""
+        it = QTableWidgetItem(os.path.basename(path) if path else 'detect')
+        it.setFlags(it.flags() & ~Qt.ItemIsEditable)
+        it.setData(Qt.UserRole, path or None)
+        it.setToolTip((f'Cell, nucleus and cytosol ROIs from {path}' if path else
+                       'Cell ROIs are found by the app') + '. Double-click (or Cell ROI files…) to change.')
+        if path:
+            it.setBackground(QColor(120, 200, 140, 70))
+        self.setItem(r, self.ROI, it)
+
     def set_path(self, r, key, path):
         it = QTableWidgetItem(imgio.display_name(path)); it.setFlags(it.flags() & ~Qt.ItemIsEditable)
         it.setData(Qt.UserRole, path)
@@ -282,6 +302,7 @@ class JobTable(QTableWidget):
         d['px'], d['px_tiff'] = self.px(r)
         d['overrides'] = self.overrides(r)
         d['czi'] = self.czi(r)
+        d['roi_file'] = self.roi_file(r)
         return d
 
     def groups(self):
@@ -1631,16 +1652,20 @@ class MainWindow(QMainWindow):
         self.roles_btn = QPushButton('Channel roles…'); self.roles_btn.clicked.connect(self.edit_roles)
         self.roles_btn.setToolTip('CZI files: choose which channel is mito, protein (POI) and nucleus, for the '
                                   'selected rows (or all CZI rows if none is selected) at once')
+        self.roi_btn = QPushButton('Cell ROI files…'); self.roi_btn.clicked.connect(self.choose_roi_files)
+        self.roi_btn.setToolTip('Use cell / nucleus / cytosol ROIs made in Cytosol Viewer (one RoiSet .zip per image) '
+                                'instead of detecting them; files are matched to the image sets by name')
         self.czi_roles = {}  # channel names of a CZI -> roles chosen for it; used for CZIs added later
         row = QHBoxLayout()
-        for b in (self.add_btn, self.addf_btn, self.group_btn, self.roles_btn, self.del_btn, self.clear_btn):
+        for b in (self.add_btn, self.addf_btn, self.group_btn, self.roles_btn, self.roi_btn, self.del_btn, self.clear_btn):
             row.addWidget(b)
         iv.addLayout(row)
         hint = QLabel('Drop TIFFs, CZIs or folders on the table; TIFFs are grouped into red/green/blue sets by name '
                       '(…Ch1_Red / …Ch2_Green / …Ch3_Blue), a CZI file is one set (its channel roles are guessed '
                       'from the channel names; change them for many files at once with Channel roles…). '
                       'Group, dataset, preset and sample can be edited; '
-                      'select rows and press Set group… to group image sets; double-click a channel to change its file.')
+                      'select rows and press Set group… to group image sets; double-click a channel to change its file. '
+                      'Cell ROIs made in Cytosol Viewer (RoiSet .zip per image) can be dropped too or added with Cell ROI files….')
         hint.setWordWrap(True); hint.setStyleSheet('color: gray; font-size: 11px;')
         iv.addWidget(hint)
         form = QFormLayout()
@@ -1795,6 +1820,11 @@ class MainWindow(QMainWindow):
     def add_paths(self, paths):
         if not paths:
             return
+        rois = roi_io.collect_roi_files(paths)
+        paths = [p for p in paths if not roi_io.is_roi_file(p)]
+        if not paths:
+            self.assign_roi_files(rois)
+            return
         sets, leftover = pipeline.find_sets(paths)
         for s in sets:  # CZIs with the channel names of one whose roles were set: same roles
             if 'czi' in s:
@@ -1826,8 +1856,55 @@ class MainWindow(QMainWindow):
                 text += ('\n\n' if text else '') + ('These CZI files could not be read or have fewer than 3 channels:\n'
                          + '\n'.join(os.path.basename(f) for f in bad_czi[:20]))
             QMessageBox.information(self, 'Some files were not added', text)
+        if rois:
+            self.assign_roi_files(rois)
+
+    def choose_roi_files(self):
+        if self.busy():
+            return
+        if not self.table.rowCount():
+            QMessageBox.information(self, 'Cell ROI files', 'Add the image sets first; the ROI files are then matched '
+                                    'to them by name (New-01_RoiSet.zip → New-01).')
+            return
+        files, _ = QFileDialog.getOpenFileNames(self, 'Cell ROIs from Cytosol Viewer (one RoiSet .zip per image)',
+                                                self.last_dir(), ROI_FILTER)
+        if files:
+            self.assign_roi_files(files)
+
+    def assign_roi_files(self, files):
+        """Match Cytosol Viewer RoiSets to the rows by name; report what matched."""
+        n = self.table.rowCount()
+        jobs = [self.table.job(r) for r in range(n)]
+        found, unmatched = roi_io.match_roi_files(files, jobs)
+        if not found and len(files) == 1 and len(jobs) == 1:
+            found, unmatched = {0: files[0]}, []
+        for r, f in found.items():
+            self.table.set_roi_file(r, f)
+        self.statusBar().showMessage(f'Cell ROIs from Cytosol Viewer set for {len(found)} of {n} image set(s)')
+        if unmatched:
+            QMessageBox.information(
+                self, 'Cell ROI files', f'{len(found)} file(s) matched an image set. These matched none (the file name '
+                'should start with the image name, e.g. New-01_RoiSet.zip for New-01.czi); double-click a row\'s '
+                'Cell ROIs cell to choose its file:\n' + '\n'.join(os.path.basename(f) for f in unmatched[:20]))
 
     def cell_double_clicked(self, r, c):
+        if c == JobTable.ROI and not self.busy():
+            cur = self.table.roi_file(r)
+            if cur:
+                box = QMessageBox(QMessageBox.Question, 'Cell ROIs', f'Row {r + 1} uses the cell ROIs in\n{cur}')
+                pick = box.addButton('Choose another file…', QMessageBox.AcceptRole)
+                det = box.addButton('Detect them instead', QMessageBox.DestructiveRole)
+                box.addButton(QMessageBox.Cancel)
+                box.exec()
+                if box.clickedButton() == det:
+                    self.table.set_roi_file(r, None)
+                if box.clickedButton() != pick:
+                    return
+            path, _ = QFileDialog.getOpenFileName(self, 'Cell ROIs from Cytosol Viewer',
+                                                  os.path.dirname(cur) if cur else self.last_dir(), ROI_FILTER)
+            if path:
+                self.table.set_roi_file(r, path)
+            return
         key = next((k for k, col in JobTable.CH_COL.items() if col == c), None)
         if not key or self.busy():
             return
@@ -1935,6 +2012,8 @@ class MainWindow(QMainWindow):
         missing = list(dict.fromkeys(f'row {r + 1}: {os.path.basename(imgio.split_ref(j[k])[0]) or k}'
                                      for r, j in enumerate(jobs) for k in ('red', 'green', 'blue')
                                      if not os.path.isfile(imgio.split_ref(j[k])[0])))
+        missing += [f'row {r + 1}: {os.path.basename(j["roi_file"])}' for r, j in enumerate(jobs)
+                    if j.get('roi_file') and not os.path.isfile(j['roi_file'])]
         if missing:
             QMessageBox.warning(self, 'Missing input', 'These files do not exist:\n' + '\n'.join(missing))
             return

@@ -14,6 +14,7 @@ The screenshots were made with synthetic example images.
 5. The Run tab
 6. Every option
 6-1. Reviewing and editing the cell ROIs
+6-2. Using cell ROIs made in Cytosol Viewer
 7. Manual thresholds and the live preview
 8. Pixel size (µm/px)
 9. Groups
@@ -210,6 +211,20 @@ Finishing
 - The confirmed ROIs are saved in each sample folder as `<sample>_roi_review.npz` and the settings sheet records `rois_reviewed = True`. Running the same images into the same output folder again asks **whether to start from the ROIs reviewed before** (Yes = load your edits, No = detect again).
 - Deleted or drawn cells go through the rest of the analysis (mitochondria, green, statistics) like any other cell.
 
+## 6-2. Using cell ROIs made in Cytosol Viewer
+If you already drew or checked the cell ROIs in Cytosol Viewer (cytosol-analysis), the analysis can use them instead of finding its own.
+
+1. In Cytosol Viewer's **세포질 ROI** tab, **모든 이미지 ROI 저장 (폴더)…** writes one `<image>_RoiSet.zip` per image, holding cell (`cellNNN`), nucleus (`nucNNN`) and cytosol (`cytoNNN`) ROIs. A single `.roi` file works too.
+2. Add the images to Mito Analyzer, then press **Cell ROI files…** and pick the zip files, or drop the zip files (or their folder) on the table.
+3. Files are matched to the image sets by name (`New-01_RoiSet.zip` → `New-01.czi`; one name may also end with the other, e.g. `Processed_New01_…` and `New01_RoiSet.zip`). A matched row shows the file name in green in the **Cell ROIs** column; the others read `detect` (the app finds them).
+4. If a file did not match, double-click that row's **Cell ROIs** cell and choose it. **Detect them instead** in the same place goes back to automatic ROIs.
+
+- Cell ROIs are the cell areas, nucleus ROIs the nuclei. With only cytosol ROIs, the outer border of each is the cell and its hole the nucleus.
+- A cell without a nucleus ROI uses the nuclei found in the blue channel inside it.
+- With **Review and edit the cell ROIs** on, the imported ROIs open in the review window first, so you can check or fix them.
+- Options such as leaving out edge or binucleate cells apply to imported ROIs as well. The *seed* column reads `imported`, and the *roi_file* entry of the settings sheet names the file.
+- The ROIs must belong to the same image (same size and coordinates).
+
 ## 7. Manual thresholds and the live preview
 Automatic thresholds are computed for every image. When the result looks wrong you can set them yourself.
 
@@ -327,6 +342,11 @@ The cell and mito tables of all samples, with group, dataset and sample columns.
       <sample>_RoiSet.zip            cell and nucleus ROIs for Fiji's ROI Manager (_RoiSet_filtered.zip = analysed cells)
       <sample>_mito_RoiSet.zip, _green_puncta_RoiSet.zip
       <sample>_summary.png, _green_cells.png, _green_on_mito.png, _mina_overlay.png …  check images
+      <sample>_used_ROIs/            the ROIs the analysis actually used (analysed cells only)
+        <sample>_cell_RoiSet.zip     cell cellNNN / nucleus nucNNN / cytosol cytoNNN (opens in Fiji and Cytosol Viewer; can be loaded back)
+        <sample>_mito_RoiSet.zip     the mito areas used in the calculations (cellNNN_mNNN, per cell)
+        <sample>_cell_labels.tif, _cytosol_labels.tif, _nuclei_labels.tif, _mito_labels.tif   pixel value = cell number
+        <sample>_used_rois.png       cell (white), nucleus (light blue) and mito (pink) outlines on the red channel
 ```
 - In Excel, open `_results.xlsx` or `groups/group_comparison.xlsx`.
 - ROIs in Fiji: open the original image and drop `_RoiSet.zip` onto the Fiji window.
@@ -350,6 +370,10 @@ For large batches without the window, or on a server.
 cd mito-tracking/application && .venv/bin/python run_app.py --cli --batch FOLDER -o OUTDIR
 # CZI files (one file, or folders with --batch); give the channel of each role if the guess is wrong
 "/Applications/Mito Analyzer.app/Contents/MacOS/MitoAnalyzer" --cli --batch CZI_FOLDER -o ~/results --czi-channels mito=0,protein=1,nucleus=2
+```
+Analyse with Cytosol Viewer ROIs: `--rois ROI_FOLDER` (or zip files). They are matched to the images by name; images without a match get detected ROIs.
+```bash
+"/Applications/Mito Analyzer.app/Contents/MacOS/MitoAnalyzer" --cli --batch CZI_FOLDER -o ~/results --rois ~/rois
 ```
 Common options: `--group NAME`, `--control GROUP`, `--pixel-size-um 0.099`, `--thr-nuclei`, `--cell-fg-level`, `--thr-mito`, `--thr-green-bright`, `--thr-puncta` (0 = auto), `--mito-method otsu`, `--no-edge-trim`, `--include-edge-cells`, `--green-pos-percent 2`. Full list: `--cli --help`.
 Several runs into the same `-o` folder add up their groups, and the last run rewrites the `groups/` comparison.
