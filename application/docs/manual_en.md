@@ -225,6 +225,12 @@ If you already drew or checked the cell ROIs in Cytosol Viewer (cytosol-analysis
 - Options such as leaving out edge or binucleate cells apply to imported ROIs as well. The *seed* column reads `imported`, and the *roi_file* entry of the settings sheet names the file.
 - The ROIs must belong to the same image (same size and coordinates).
 
+**Using Cytosol Viewer's `_full_raw.tif` as the image**
+- Without the original CZI, the `<image>_full_raw.tif` Cytosol Viewer exports can be added as it is. It is a multi-channel TIFF with the original values, so one file is one image set, like a CZI. Channel roles come from the channel names (DAPI = nucleus, first = mito, second = protein; change them with **Channel roles…**); the pixel size is read from the file.
+- When the whole export folder is added, only `_full_raw.tif` becomes an image; the coloured `_full_C0_…` / `_composite.tif` copies and the `_crop…` files are skipped (a `_cropN_raw.tif` is used only when there is no full image). The `<image>_RoiSet.zip` next to it is paired automatically.
+- The sample name drops `_full_raw` and any image ID Cytosol Viewer added (`New-01_full_raw.tif` → `New-01`).
+- Other ImageJ / OME TIFFs with 3 or more channels are read the same way.
+
 ## 7. Manual thresholds and the live preview
 Automatic thresholds are computed for every image. When the result looks wrong you can set them yourself.
 

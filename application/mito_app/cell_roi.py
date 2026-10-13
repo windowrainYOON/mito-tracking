@@ -65,7 +65,7 @@ def read_pixel_size(path):
     (cm / inch) with XResolution. A value outside PX_RANGE_UM (typical of a screen dpi such as 72 or 300)
     is treated as missing. Returns (px_um, source)."""
     import re as _re
-    if imgio.is_czi(imgio.split_ref(path)[0]):
+    if imgio.is_ref(path):
         return imgio.pixel_size(path)
     try:
         with tifffile.TiffFile(path) as t:

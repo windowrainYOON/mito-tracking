@@ -153,7 +153,7 @@ def _keys(job):
             continue
         f = imgio.split_ref(p)[0]
         stem = os.path.splitext(os.path.basename(f))[0]
-        out |= {stem.lower(), pipeline.sample_name(f).lower()}
+        out |= {stem.lower(), pipeline.sample_name(f).lower(), imgio.file_sample_name(f).lower()}
     return out - {''}
 
 

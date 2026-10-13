@@ -2,7 +2,9 @@
 
 A CZI file holds all channels of a field in one file. The pipeline works on one image per channel, so a CZI
 channel is addressed as '<file>.czi::ch<N>' (N = 0-based channel index in the file); `imread` and
-`pixel_size` accept such references as well as plain TIFF paths.
+`pixel_size` accept such references as well as plain TIFF paths. A multi-channel TIFF (an ImageJ / OME hyperstack
+with 3 or more channels, e.g. the `<image>_full_raw.tif` Cytosol Viewer exports) is handled the same way
+('<file>.tif::ch<N>'); `czi_info` describes both kinds of file.
 
 The CZI reader is self-contained (ZISRAW segment format: file header -> subblock directory -> subblocks);
 uncompressed subblocks need nothing else, JPEG XR / zstd compressed ones need the optional imagecodecs package.
@@ -20,7 +22,7 @@ import numpy as np
 import tifffile
 
 CZI_EXT = '.czi'
-REF_RX = re.compile(r'^(.*\.czi)::ch(\d+)$', re.I)
+REF_RX = re.compile(r'^(.*\.(?:czi|tiff?))::ch(\d+)$', re.I)
 # CZI pixel types: (numpy dtype, samples per pixel)
 PIXEL_TYPES = {0: ('<u1', 1), 1: ('<u2', 1), 2: ('<f4', 1), 3: ('<u1', 3), 4: ('<u2', 3), 9: ('<u1', 4),
                12: ('<u4', 1)}
@@ -30,6 +32,24 @@ ROLES = (('red', 'Mito'), ('green', 'Protein (POI)'), ('blue', 'Nucleus'))
 
 def is_czi(path):
     return str(path).lower().endswith(CZI_EXT)
+
+
+def is_ref(path):
+    """A channel of a multi-channel file ('<file>::chN'), as opposed to a single-channel TIFF path."""
+    return split_ref(path)[1] is not None
+
+
+def is_multi(path):
+    """A CZI file or a TIFF with 3 or more channels (one image set by itself)."""
+    if is_czi(path):
+        return True
+    if not str(path).lower().endswith(('.tif', '.tiff')):
+        return False
+    try:
+        st = os.stat(path)
+        return len(_tiff_info(path, st.st_mtime_ns, st.st_size)['channels']) >= 3
+    except Exception:
+        return False
 
 
 def channel_ref(path, ch):
@@ -53,17 +73,21 @@ def display_name(path):
 
 
 def imread(path):
-    """Image array of a TIFF file or of one CZI channel (2-D uint8 for CZI)."""
+    """Image array of a TIFF file or of one channel of a CZI / multi-channel TIFF (2-D uint8 for those)."""
     f, ch = split_ref(path)
     if ch is None:
         return tifffile.imread(path)
     st = os.stat(f)
-    return _czi_channel(f, ch, st.st_mtime_ns, st.st_size).copy()
+    read = _czi_channel if is_czi(f) else _tiff_channel
+    return read(f, ch, st.st_mtime_ns, st.st_size).copy()
 
 
 def pixel_size(path):
     """(pixel size in um, source) for a CZI file / channel reference; (None, reason) when it has none."""
     f, _ = split_ref(path)
+    if not is_czi(f):
+        from .cell_roi import read_pixel_size
+        return read_pixel_size(f)
     try:
         px = czi_info(f)['px_um']
     except Exception as e:
@@ -74,7 +98,7 @@ def pixel_size(path):
 def czi_info(path):
     """{'channels': [{'name', 'fluor', 'emission'}], 'px_um', 'size': (h, w), 'bits', 'n_z', 'n_t', 'n_scenes'}"""
     st = os.stat(path)
-    return _czi_info(path, st.st_mtime_ns, st.st_size)
+    return (_czi_info if is_czi(path) else _tiff_info)(path, st.st_mtime_ns, st.st_size)
 
 
 def guess_roles(channels):
@@ -120,8 +144,20 @@ def parse_roles(text):
 def czi_set(path, roles, dataset, root):
     """Image-set dict (as pipeline.find_sets returns) for one CZI file with role -> channel index."""
     s = {k: channel_ref(path, roles[k]) for k in ('red', 'green', 'blue')}
-    return dict(s, dataset=dataset, name=os.path.splitext(os.path.basename(path))[0], root=root,
-                czi=path, roles=dict(roles))
+    return dict(s, dataset=dataset, name=file_sample_name(path), root=root, czi=path, roles=dict(roles))
+
+
+EXPORT_RX = re.compile(r'_(full|crop\d+)_(raw|composite|C\d+_.*)$', re.I)
+
+
+def file_sample_name(path):
+    """Sample name of a multi-channel file: 'New-01.czi' -> 'New-01'; Cytosol Viewer's 'New-01_full_raw.tif'
+    -> 'New-01' (a crop keeps its number: 'New-01_crop1_raw.tif' -> 'New-01_crop1')."""
+    stem = os.path.splitext(os.path.basename(path))[0]
+    out = re.sub(r'_full_raw$', '', re.sub(r'_(crop\d+)_raw$', r'_\1', stem, flags=re.I), flags=re.I)
+    if out != stem:   # Cytosol Viewer adds its image ID when names collide: 'New-01_A9F3-2596-73B6_full_raw'
+        out = re.sub(r'_[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}(?=$|_crop\d+$)', '', out, flags=re.I)
+    return out or stem
 
 
 # ---- CZI file format -------------------------------------------------------------------------------
@@ -245,6 +281,52 @@ def _decode(raw, comp, dtype, shape):
             out = np.stack([out[:half], out[half:]], -1).ravel()
         return out.view(dtype).reshape(shape)
     raise ValueError(f'unsupported CZI compression {comp}')
+
+
+# ---- multi-channel TIFF -----------------------------------------------------------------------------
+
+@lru_cache(maxsize=256)
+def _tiff_info(path, _mtime, _size):
+    """Same keys as _czi_info for an ImageJ / OME hyperstack; 'channels' is empty for a plain image."""
+    with tifffile.TiffFile(path) as t:
+        s = t.series[0]
+        axes, shape = s.axes.upper(), s.shape
+        ij = t.imagej_metadata or {}
+        bits = int(s.dtype.itemsize * 8)
+    n = shape[axes.index('C')] if 'C' in axes else 0
+    if 'C' not in axes or n < 3 or 'S' in axes:   # RGB(A) colour images are not channel stacks
+        return dict(channels=[], px_um=None, bits=bits, size=tuple(shape[-2:]), n_z=1, n_t=1, n_scenes=1,
+                    axes=axes)
+    labels = ij.get('Labels') or []
+    if isinstance(labels, str):
+        labels = re.findall(r"'([^']*)'", labels)
+    labels = list(labels)[:n] if len(labels) >= n else []
+    chans = [dict(name=str(labels[i]) if labels else f'C{i}', fluor='', emission=None) for i in range(n)]
+    from .cell_roi import read_pixel_size
+    return dict(channels=chans, px_um=read_pixel_size(path)[0], bits=bits,
+                size=(shape[axes.index('Y')], shape[axes.index('X')]),
+                n_z=shape[axes.index('Z')] if 'Z' in axes else 1, n_t=shape[axes.index('T')] if 'T' in axes else 1,
+                n_scenes=1, axes=axes)
+
+
+@lru_cache(maxsize=8)
+def _tiff_channel(path, ch, _mtime, _size):
+    """One channel of a hyperstack: first time point, maximum projection over z, scaled to uint8 like a CZI."""
+    info = _tiff_info(path, _mtime, _size)
+    if ch >= len(info['channels']):
+        raise ValueError(f'{os.path.basename(path)} has no channel {ch} (it has {len(info["channels"])})')
+    a = tifffile.imread(path)
+    axes = info['axes']
+    for ax in axes:
+        if ax not in 'CZYX':
+            a = np.take(a, 0, axis=axes.index(ax)); axes = axes.replace(ax, '')
+    a = np.take(a, ch, axis=axes.index('C')); axes = axes.replace('C', '')
+    if 'Z' in axes:
+        a = a.max(axis=axes.index('Z'))
+    if a.dtype != np.uint8:
+        top = 65535.0 if a.dtype == np.uint16 else max(float(a.max()), 1.0)
+        a = np.clip(np.round(a.astype(float) * (255.0 / top)), 0, 255).astype(np.uint8)
+    return a
 
 
 @lru_cache(maxsize=8)

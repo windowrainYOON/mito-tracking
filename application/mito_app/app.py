@@ -93,7 +93,7 @@ def cli(argv):
             ap.error(f"--rois: no file matches {s['name']}")
         return m[0]
 
-    if not A.batch and len(A.inputs) == 1 and pipeline.imgio.is_czi(A.inputs[0]):
+    if not A.batch and len(A.inputs) == 1 and pipeline.imgio.is_multi(A.inputs[0]):
         sets, _ = pipeline.find_sets(A.inputs, roles)
         if not sets:
             ap.error(f'{A.inputs[0]}: cannot tell the channel roles; give --czi-channels')

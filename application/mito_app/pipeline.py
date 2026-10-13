@@ -57,7 +57,7 @@ def sample_name(red_path):
     a CZI channel 'New-01.czi::ch0' -> 'New-01'."""
     czi, ch = imgio.split_ref(red_path)
     if ch is not None:
-        return os.path.splitext(os.path.basename(czi))[0]
+        return imgio.file_sample_name(czi)
     stem = os.path.splitext(os.path.basename(red_path))[0]
     out = re.sub(r'[_\- ]*(ch\d+)?[_\- ]*(red|mito)$', '', stem, flags=re.I)
     if out == stem:  # channel tag in the middle of the name
@@ -89,6 +89,9 @@ def find_sets(paths, czi_roles=None):
     by file name. A CZI file is one set by itself: its channels are given the roles in `czi_roles`
     ({'red': mito channel, 'green': protein channel, 'blue': nucleus channel}, 0-based indices) or, when that is
     None, the roles guessed from its channel names (imgio.guess_roles); the set then carries 'czi' and 'roles'.
+    A TIFF with 3 or more channels is one set the same way. Of the files Cytosol Viewer exports per image
+    (<image>_full_raw / _composite / _C0_… and the same for each crop) only the full-size raw stack is used
+    (a crop's raw stack only when there is no full one): the others are rendered colour copies.
 
     Returns (sets, leftover): sets is a list of {'red', 'green', 'blue', 'dataset', 'name', 'root'} dicts in name
     order, where dataset is the name of the folder that was added (or the file's own folder for single files) and
@@ -107,8 +110,17 @@ def find_sets(paths, czi_roles=None):
         elif os.path.isfile(p):
             files.setdefault(p, (os.path.basename(os.path.dirname(p)), os.path.dirname(p)))
     sets, used, bad_czi = {}, set(), []
+    exports = {f for f in files if imgio.EXPORT_RX.search(os.path.splitext(os.path.basename(f))[0])}
+    full = {re.sub(r'_full_raw$', '', os.path.splitext(f)[0], flags=re.I) for f in exports
+            if re.search(r'_full_raw$', os.path.splitext(f)[0], re.I)}
     for f, (ds, root) in files.items():
-        if imgio.is_czi(f):
+        if f in exports:
+            stem = os.path.splitext(f)[0]
+            crop = re.search(r'^(.*)_crop\d+_raw$', stem, re.I)
+            if not re.search(r'_raw$', stem, re.I) or (crop and crop.group(1) in full) or not imgio.is_multi(f):
+                used.add(f)     # rendered copies / crops of an exported image: not image sets, not reported
+                continue
+        if imgio.is_multi(f):
             try:
                 n = len(imgio.czi_info(f)['channels'])
                 roles = czi_roles or imgio.guess_roles(imgio.czi_info(f)['channels'])

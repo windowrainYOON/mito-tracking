@@ -1667,7 +1667,8 @@ class MainWindow(QMainWindow):
             row.addWidget(b)
         iv.addLayout(row)
         hint = QLabel('Drop TIFFs, CZIs or folders on the table; TIFFs are grouped into red/green/blue sets by name '
-                      '(…Ch1_Red / …Ch2_Green / …Ch3_Blue), a CZI file is one set (its channel roles are guessed '
+                      '(…Ch1_Red / …Ch2_Green / …Ch3_Blue), a CZI file or a multi-channel TIFF (e.g. Cytosol Viewer\'s '
+                      '<image>_full_raw.tif) is one set (its channel roles are guessed '
                       'from the channel names; change them for many files at once with Channel roles…). '
                       'Group, dataset, preset and sample can be edited; '
                       'select rows and press Set group… to group image sets; double-click a channel to change its file. '
@@ -1848,7 +1849,7 @@ class MainWindow(QMainWindow):
             msg += f', {len(sets) - len(new)} already in the table'
         n_czi = sum('czi' in s for s in new)
         if n_czi:
-            msg += (f' ({n_czi} CZI: channel roles guessed from the channel names or reused; check the Red / Green / Blue '
+            msg += (f' ({n_czi} CZI / multi-channel TIFF: channel roles guessed from the channel names or reused; check the Red / Green / Blue '
                     'columns and use Channel roles… to change them)')
         self.statusBar().showMessage(msg)
         leftover = [f for f in leftover if not roi_io.is_cytosol_export(f)]   # Cytosol Viewer's own TIFF exports

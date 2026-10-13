@@ -217,6 +217,12 @@ Options의 **Review and edit the cell ROIs before the analysis** (기본: 켜짐
 - 가장자리 세포 제외, 이핵 세포 제외 같은 옵션은 불러온 ROI에도 똑같이 적용됩니다. 표의 *seed* 열은 `imported`, settings 시트의 *roi_file* 에 사용한 파일이 기록됩니다.
 - 이미지 크기와 ROI 좌표가 맞아야 합니다 (같은 원본 이미지에서 만든 ROI).
 
+**Cytosol Viewer의 `_full_raw.tif` 를 이미지로 바로 쓰기**
+- 원본 CZI 없이 Cytosol Viewer가 내보낸 `<이미지>_full_raw.tif` 를 그대로 넣어도 됩니다. 이 파일은 원본 값을 그대로 담은 채널 여러 개짜리 TIFF라서 CZI처럼 파일 하나가 이미지 세트 하나가 됩니다. 채널 역할은 채널 이름으로 정합니다 (DAPI = 핵, 첫째 = mito, 둘째 = protein; **Channel roles…** 로 바꿀 수 있음). 픽셀 크기도 파일에 든 값을 씁니다.
+- 내보내기 폴더를 통째로 넣으면 `_full_raw.tif` 만 이미지로 쓰고, 색을 입힌 `_full_C0_…` · `_composite.tif` 와 잘라낸 `_crop…` 파일은 건너뜁니다 (전체 이미지가 없을 때만 `_cropN_raw.tif` 를 씁니다). 같은 폴더의 `<이미지>_RoiSet.zip` 은 자동으로 짝지어집니다.
+- 샘플 이름은 `_full_raw` 와 Cytosol Viewer가 붙인 이미지 ID를 뺀 이름입니다 (`New-01_full_raw.tif` → `New-01`).
+- 채널이 3개 이상인 다른 ImageJ / OME TIFF도 같은 방식으로 읽습니다.
+
 ## 7. 임계값 수동 조정과 미리보기
 자동 임계값은 이미지마다 계산됩니다. 결과가 이상하면 직접 정할 수 있습니다.
 

@@ -33,7 +33,7 @@ K8 = np.ones((3, 3), int)
 
 def load_channel(path, ch):
     a = imgio.imread(path)
-    if imgio.is_czi(imgio.split_ref(path)[0]):
+    if imgio.is_ref(path):
         px_um = imgio.pixel_size(path)[0] or 1.0
     else:
         with tifffile.TiffFile(path) as t:
