@@ -12,7 +12,7 @@ from dataclasses import asdict, dataclass, fields, replace
 
 import numpy as np
 
-from . import cell_roi, imgio, nuclei, green_cells, mina, mito_objects, roi_io, stats
+from . import cell_roi, cytosol_cells, imgio, nuclei, green_cells, mina, mito_objects, roi_io, stats
 from . import green as green_q
 
 
@@ -30,9 +30,14 @@ class Params:
     dim_nuclei: bool = True           # out-of-focus nuclei also seed (and own) a cell
     trim_edge_cells: bool = True      # cut a frame-touching tip off along a mito-free line so the cell is kept
     nuclei_method: str = 'texture_merge'  # nucleus detection: 'texture_merge', 'texture' or 'otsu' (mito_app/nuclei.py)
+    # cell ROI detection: 'cytosol' = Cytosol Analysis (Cytosol Viewer) algorithm, mito_app/cytosol_cells.py;
+    # 'mito' = the earlier detection of this app (nuclei_method, dim_nuclei and cell_fg_level apply to it only)
+    cell_method: str = 'cytosol'
+    cell_channel: str = 'red'         # 'cytosol': background-signal channel, saturated to fill the cytoplasm
     # manual thresholds (0 = automatic, computed per image); see THRESHOLDS and mito_app/thresholds.py
     thr_nuclei: float = 0.0           # nucleus candidates: flattened (texture) or smoothed (otsu) blue
-    cell_fg_level: float = 0.12       # cell area: mito density (red at 3 um / its 99th percentile) above this
+    thr_cell: float = 0.0             # cell area ('cytosol'): smoothed cell channel above this; 0 = Otsu
+    cell_fg_level: float = 0.12       # cell area ('mito'): mito density (red at 3 um / its 99th percentile) above this
     thr_mito: float = 0.0             # mito mask: preprocessed red (rolling ball 1.5 um + sigma 0.7 px)
     thr_green_bright: float = 0.0     # green+ cells: bright green, smoothed auto-levelled green
     thr_puncta: float = 0.0           # green puncta: top-hat of the background-subtracted green
@@ -40,8 +45,12 @@ class Params:
 
 # (Params field, label, unit, image it applies to, what "auto" means)
 THRESHOLDS = (
-    ('thr_nuclei', 'Nuclei', 'blue', 'flattened blue (texture) / smoothed blue (Otsu)', '0.5 × Otsu (texture), Otsu'),
-    ('cell_fg_level', 'Cell area', '× p99', 'mito density (red at 3 µm ÷ its 99th percentile)', 'fixed 0.12'),
+    ('thr_nuclei', 'Nuclei', 'blue', 'smoothed blue (Cytosol detection, Otsu nucleus method) / flattened blue (texture)',
+     'Otsu (Cytosol detection), 0.5 × Otsu (texture), Otsu'),
+    ('thr_cell', 'Cell area', 'cell ch.', 'cell channel (red by default), saturated and smoothed with the nuclei '
+     '(Cytosol detection)', 'Otsu'),
+    ('cell_fg_level', 'Cell area (previous detection)', '× p99', 'mito density (red at 3 µm ÷ its 99th percentile)',
+     'fixed 0.12'),
     ('thr_mito', 'Mitochondria', 'red', 'preprocessed red (rolling ball 1.5 µm, σ 0.7 px)',
      'per cell: local mean AND 0.5 × Otsu (split) / Otsu of raw red (MiNA classic)'),
     ('thr_green_bright', 'Green+ (bright green)', 'green AL', 'smoothed auto-levelled green',
@@ -364,12 +373,15 @@ def _cell_stage(red_path, green_path, blue_path, p, log):
     k = float(np.clip(cell_roi.REF_PX_UM / px, 0.2, 5))
     a = _as_rgb(a, g)
     nuc_img, _ = cell_roi.load_nuclei(blue_path, k)  # scale bar removed
-    nuc, dim, ninfo = nuclei.detect(nuc_img, k, p.nuclei_method, p.thr_nuclei)
     red, _ = mina.load_channel(red_path, 0)
     green, _ = mina.load_channel(green_path, 1)
     if not (red.shape == g.shape == nuc_img.shape):
         raise ValueError(f'Image sizes differ: red {red.shape}, green {g.shape}, blue {nuc_img.shape}')
     gn, norm = cell_roi.normalize_green(g, k)
+    base = dict(a=a, g=g, gn=gn, norm=norm, px=px, px_source=px_source, k=k, nuc_img=nuc_img, red=red, green=green)
+    if p.cell_method == 'cytosol':
+        return _cytosol_cell_stage(base, p, log)
+    nuc, dim, ninfo = nuclei.detect(nuc_img, k, p.nuclei_method, p.thr_nuclei)
     log(f'     {red.shape[1]}x{red.shape[0]} px, pixel size {px:.4f} um ({px_source}), {nuc.max()} in-focus nuclei; '
         f'green auto-levels: background {norm["offset"]:.2f}, gain x{norm["gain"]:.2f}')
 
@@ -393,8 +405,44 @@ def _cell_stage(red_path, green_path, blue_path, p, log):
         res['trimmed'] = (lab0 > 0) & (res['labels'] == 0)
         if trimmed:
             log(f'     {len(trimmed)} cells at the frame kept by cutting their tip off along a mito-free line')
-    return dict(a=a, g=g, gn=gn, norm=norm, px=px, px_source=px_source, k=k, nuc_img=nuc_img, nuc=nuc,
-                ninfo=ninfo, n_focus=n_focus, red=red, green=green, res=res, morph=morph, trimmed=trimmed)
+    return dict(base, nuc=nuc, ninfo=ninfo, n_focus=n_focus, res=res, morph=morph, trimmed=trimmed)
+
+
+def cytosol_params(p):
+    """Cytosol Analysis detection settings from this app's Params."""
+    return cytosol_cells.RoiParams(min_cell_um2=p.min_area_um2, edge_mode='trim' if p.trim_edge_cells else 'keep',
+                                   nuc_threshold=p.thr_nuclei or None, cell_threshold=p.thr_cell or None)
+
+
+def cell_channel(st_or_images, p):
+    red, green = (st_or_images['red'], st_or_images['green']) if isinstance(st_or_images, dict) else st_or_images
+    return green if p.cell_channel == 'green' else red
+
+
+def _cytosol_cell_stage(st, p, log):
+    """Step 2 with the Cytosol Analysis detection: nuclei by Otsu on the blue channel, cells by a nucleus-seeded
+    watershed over the saturated cell channel (mito_app/cytosol_cells.py, same as Cytosol Viewer)."""
+    px, k, gn, red = st['px'], st['k'], st['gn'], st['red']
+    log(f'     {red.shape[1]}x{red.shape[0]} px, pixel size {px:.4f} um ({st["px_source"]}); '
+        f'green auto-levels: background {st["norm"]["offset"]:.2f}, gain x{st["norm"]["gain"]:.2f}')
+    log(f'2/5  Segmenting cells (Cytosol Analysis detection: {p.cell_channel} channel saturated, one nucleus per cell)')
+    cy = cytosol_cells.segment_cells(cell_channel(st, p), st['nuc_img'], px, cytosol_params(p))
+    lab = cy['labels']
+    nuc = cy['nuclei'] if cy['nuclei'] is not None else np.zeros_like(lab)
+    dens = cytosol_cells.filters.gaussian(np.log1p(np.clip(gn, 0, 20)), 10 * k)  # for the binucleate QC
+    seeds = np.array([r.centroid for r in cytosol_cells.measure.regionprops(nuc)], int).reshape(-1, 2)
+    res = dict(labels=lab, nuclei=nuc, dens=dens, fg=lab > 0, seeds=seeds, nuc_img=st['nuc_img'],
+               trimmed=cy['trimmed'] if cy['trimmed_px'] else None)
+    nt = cy['nuc_threshold']
+    ninfo = dict(method='cytosol', n_rejected=0, threshold=nt if nt is not None else float('nan'),
+                 threshold_auto=float('nan') if p.thr_nuclei else (nt if nt is not None else float('nan')))
+    log(f"     {int(lab.max())} cells, {len(set(np.unique(nuc)) - {0})} with a nucleus; thresholds: "
+        f"nuclei {nt if nt is not None else float('nan'):.4g}, cells {cy['cell_threshold']:.4g} "
+        f"({'manual' if p.thr_cell else 'Otsu'})")
+    if cy['trimmed_px']:
+        log(f"     {len(cy['trimmed_px'])} cells at the frame trimmed to 1 um inside the border")
+    return dict(st, nuc=nuc, ninfo=ninfo, n_focus=int(lab.max()), res=res, morph={}, trimmed=cy['trimmed_px'],
+                cell_threshold=cy['cell_threshold'])
 
 
 def review_image(st):
@@ -548,7 +596,8 @@ def run(red_path, green_path, blue_path, outdir, params=None, name=None, log=pri
                     pixel_size_source=px_source, rois_reviewed=roi_edit is not None, roi_file=roi_file or '', green_background=norm['offset'], green_gain=norm['gain'],
                     nuclei_threshold=ninfo.get('threshold', float('nan')),
                     nuclei_threshold_auto=ninfo.get('threshold_auto', float('nan')),
-                    cell_fg_level=p.cell_fg_level,
+                    cell_method=p.cell_method,
+                    cell_threshold=st.get('cell_threshold', float('nan')) if p.cell_method == 'cytosol' else p.cell_fg_level,
                     mito_threshold=p.thr_mito if p.thr_mito > 0 else 'auto (per cell)',
                     puncta_threshold=thr, green_bright_threshold=ginfo['threshold'],
                     **{f'param_{k_}': v for k_, v in asdict(p).items()})

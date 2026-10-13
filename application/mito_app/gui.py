@@ -1446,7 +1446,8 @@ class ThresholdDialog(QDialog):
             QApplication.setOverrideCursor(Qt.WaitCursor)
             try:
                 self.prev[r] = self.T.Preview(j['red'], j['green'], j['blue'], self.win.px.value() or j['px'],
-                                              self.win.nuclei_method.currentData(), self.win.sens.value())
+                                              self.win.nuclei_method.currentData(), self.win.sens.value(),
+                                              self.win.cell_method.currentData(), self.win.cell_channel.currentData())
             finally:
                 QApplication.restoreOverrideCursor()
         return self.prev[r]
@@ -1517,7 +1518,7 @@ class ThresholdDialog(QDialog):
         base = P.display(key)
         rgb = np.dstack([base, base, base])
         mode = self.view_mode.currentIndex()
-        col = np.array({'thr_nuclei': (0.2, 0.5, 1.0), 'cell_fg_level': (1.0, 0.8, 0.2), 'thr_mito': (1.0, 0.25, 0.8),
+        col = np.array({'thr_nuclei': (0.2, 0.5, 1.0), 'thr_cell': (1.0, 0.85, 0.0), 'cell_fg_level': (1.0, 0.8, 0.2), 'thr_mito': (1.0, 0.25, 0.8),
                         'thr_green_bright': (0.2, 1.0, 0.3), 'thr_puncta': (1.0, 1.0, 0.1)}[key])
         if mode == 0:
             rgb[m] = rgb[m] * 0.45 + col * 0.55
@@ -1701,11 +1702,13 @@ class MainWindow(QMainWindow):
                                     'check them and fix them by hand (add, subtract, draw, delete, merge). The analysis '
                                     'continues with the ROIs you confirm; they are saved with the results and offered '
                                     'again the next time you run the same images.')
-        self.trim_edge = QCheckBox('Keep cells whose tip touches the border (cut the tip off at a mito-free line)')
+        self.trim_edge = QCheckBox('Keep cells that touch the border (trim them inside it)')
         self.trim_edge.setChecked(True)
-        self.trim_edge.setToolTip('A cell whose nucleus is well inside the image but whose ROI reaches the border '
-                                  'is cut along the mito-free line (and its shape) between its body and the border, '
-                                  'when such a line exists, and analysed. The cut-off part is hatched in the summary.')
+        self.trim_edge.setToolTip('Cytosol Analysis detection: a cell cut by the image frame keeps the part 1 µm inside '
+                                  'the frame (the piece holding its nucleus), as in Cytosol Viewer.\n'
+                                  'Previous detection: a cell whose nucleus is well inside the image is cut along the '
+                                  'mito-free line between its body and the border, when such a line exists.\n'
+                                  'Either way the trimmed cell is analysed and the cut-off part is hatched in the summary.')
         self.incl_edge = QCheckBox('Also analyse cells touching the image border')
         self.min_area = self._spin(0, 1e5, 250, 1, ' µm²')
         self.binuc_tau = self._spin(-1, 1, 0.0, 3, '', 0.01,
@@ -1714,6 +1717,18 @@ class MainWindow(QMainWindow):
         self.sens = self._spin(0.2, 5, 1.0, 2, ' ×', 0.05,
                                'Multiplies the automatic green puncta threshold: >1 keeps fewer, brighter puncta')
         self.min_mito = self._spin(0, 10, 0.05, 3, ' µm²', 0.01, 'Mito pieces smaller than this are left out of the per-mito table')
+        self.cell_method = QComboBox()
+        self.cell_method.addItem('Cytosol Analysis (same as Cytosol Viewer)', 'cytosol')
+        self.cell_method.addItem('Previous Mito Analyzer detection', 'mito')
+        self.cell_method.setToolTip('Cytosol Analysis: the cell channel is saturated so the dim signal fills each '
+                                    'cytoplasm, nuclei are found by Otsu on the blue channel, and each nucleus grows '
+                                    'into one cell up to the dark gaps between cells (thresholds: Nuclei, Cell area).\n'
+                                    'Previous: the earlier detection of this app (nucleus method, dim nuclei and '
+                                    '"Cell area (previous detection)" apply to it only).')
+        self.cell_channel = QComboBox()
+        self.cell_channel.addItem('Red (mito)', 'red'); self.cell_channel.addItem('Green', 'green')
+        self.cell_channel.setToolTip('Channel whose dim signal outlines the cells (Cytosol Viewer\'s "background '
+                                     'signal" channel)')
         self.nuclei_method = QComboBox()
         for key, label in nuclei.METHODS:
             self.nuclei_method.addItem(label, key)
@@ -1736,8 +1751,17 @@ class MainWindow(QMainWindow):
         of.addRow('Pixel size (0 = auto)', self.px)
         of.addRow('Green puncta threshold', self.sens)
         of.addRow('Minimum mito object', self.min_mito)
+        of.addRow('Cell detection', self.cell_method)
+        of.addRow('Cell channel', self.cell_channel)
         of.addRow('Nucleus detection', self.nuclei_method)
         of.addRow(self.dim_nuclei)
+
+        def method_changed(_=None):
+            cyto = self.cell_method.currentData() == 'cytosol'
+            self.cell_channel.setEnabled(cyto)
+            self.nuclei_method.setEnabled(not cyto); self.dim_nuclei.setEnabled(not cyto)
+        self.cell_method.currentIndexChanged.connect(method_changed)
+        method_changed()
         of.addRow('Green+ cell: bright green ≥', self.green_pos)
 
         # thresholds: automatic per image, or one manual value for every image (per-image values in the table)
@@ -2053,7 +2077,9 @@ class MainWindow(QMainWindow):
                                  puncta_sensitivity=self.sens.value(), min_mito_area_um2=self.min_mito.value(),
                                  mito_method=self.mito_method.currentData(),
                                  green_pos_percent=self.green_pos.value(), dim_nuclei=self.dim_nuclei.isChecked(),
-                                 nuclei_method=self.nuclei_method.currentData(), **self.threshold_values())
+                                 nuclei_method=self.nuclei_method.currentData(),
+                                 cell_method=self.cell_method.currentData(),
+                                 cell_channel=self.cell_channel.currentData(), **self.threshold_values())
         self.logbox.clear()
         if self.review_rois.isChecked():
             saved = {i: pipeline.read_roi_edit(j['outdir'], j['name']) for i, j in enumerate(jobs)}

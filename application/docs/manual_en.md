@@ -161,15 +161,17 @@ Editable table cells
 | Review and edit the cell ROIs before the analysis | on | Stops after the cell ROIs are found and opens the review window (section 6-1) | turn off for a fully automatic run |
 | Mito segmentation | Split objects | How mitochondria are segmented. *Split objects*: local threshold, touching mitochondria split at dark, narrow contacts (adds fragmentation metrics). *MiNA classic*: one Otsu threshold per cell, as Fiji MiNA | MiNA classic only to compare with Fiji MiNA directly |
 | Exclude cells that share a weak border | off | Leaves out neighbouring cells without a clear border between them (look binucleate) | crowded cells with uncertain borders, for a conservative analysis |
-| Keep cells whose tip touches the border | on | A cell whose nucleus is well inside the image but whose tip reaches the edge is cut at the line where its mitochondria stop and analysed (the cut part is hatched) | turn off to leave such cells out entirely |
+| Keep cells that touch the border | on | A cell cut by the image edge is trimmed and analysed (the cut part is hatched): the Cytosol Analysis detection keeps the part 1 µm inside the frame (as Cytosol Viewer does), the previous detection cuts at the line where the mitochondria stop | turn off to leave such cells out entirely |
 | Also analyse cells touching the image border | off | Analyses cells that touch the edge too | normally keep off (cut-off cells would be included) |
 | Minimum cell area | 250 µm² | Smaller cell ROIs are dropped | lower it for very small cells |
 | Weak-border threshold | 0.000 | Border-contrast level for "weak border" pairs (with the option above) | rarely |
 | Pixel size (0 = auto) | 0 | 0 reads it from each file; a value is used for **every** image | when the files have no or wrong calibration |
 | Green puncta threshold | 1.00 × | Factor on the automatic puncta threshold: above 1 fewer, brighter puncta; below 1 more | too many / too few puncta (or a manual value, section 7) |
 | Minimum mito object | 0.05 µm² | Smaller mito pieces are left out of the mito-object table | raise it with noisy images |
-| Nucleus detection | Texture + merge | How nuclei are found: real nuclei are told from diffuse blue by their chromatin texture, curved nuclei stay whole, touching nuclei stay apart. *Texture, no merge* and *Global Otsu (old)* are also available | keep the default; Otsu is fine for very clean nuclear stains |
-| Dim (out-of-focus) nuclei also get their own cell | on | Faint nuclei also get a cell, so their mitochondria are not given to a neighbour | almost always on |
+| Cell detection | Cytosol Analysis | How cell ROIs are found. *Cytosol Analysis*: the same algorithm as Cytosol Viewer's automatic detection: the Cell channel is saturated so its dim signal fills each cytoplasm, and each nucleus (Otsu on blue) grows into one cell up to the dark gaps between cells. The same image and settings give pixel-for-pixel the same ROIs as Cytosol Viewer. *Previous Mito Analyzer detection*: the detection up to 1.5.0 | Previous only to reproduce older results exactly |
+| Cell channel | Red (mito) | Channel whose dim signal outlines the cells for the Cytosol Analysis detection (Cytosol Viewer's "background signal" channel) | Green when the faint whole-cell signal is in green |
+| Nucleus detection | Texture + merge | How nuclei are found: real nuclei are told from diffuse blue by their chromatin texture, curved nuclei stay whole, touching nuclei stay apart. *Texture, no merge* and *Global Otsu (old)* are also available. **Previous detection only** (the Cytosol Analysis detection finds nuclei by Otsu) | keep the default; Otsu is fine for very clean nuclear stains |
+| Dim (out-of-focus) nuclei also get their own cell | on | Faint nuclei also get a cell, so their mitochondria are not given to a neighbour. Previous detection only | almost always on |
 | Green+ cell: bright green ≥ | 2.0 % | A cell is green-positive (expressing) when bright green covers at least this share of its cytoplasm | lower for weak expression, raise with bright background |
 | Thresholds | all auto | The five thresholds, automatic or manual (section 7) | when the automatic result does not fit |
 
@@ -237,7 +239,8 @@ Automatic thresholds are computed for every image. When the result looks wrong y
 | Threshold | Decides | Too low | Too high |
 |---|---|---|---|
 | Nuclei | nucleus candidates | cytoplasm blobs become nuclei → fake cells | faint nuclei are missed → two cells in one ROI |
-| Cell area | the cell area (mito density, 0–1) | background joins the cells | cells come out too small |
+| Cell area | the cell area: the Cell channel saturated and smoothed (same units as Cytosol Viewer's cell threshold) | background joins the cells | cells come out too small |
+| Cell area (previous detection) | the cell area of the previous detection (mito density, 0–1) | background joins the cells | cells come out too small |
 | Mitochondria | the mito mask | background counted as mito, pieces merge | faint mito missed, over-fragmented |
 | Green+ (bright green) | bright green for the green+ call | green− cells called green+ | weakly expressing cells missed |
 | Green puncta | bright green spots | noise becomes puncta | real puncta missed |
@@ -397,9 +400,9 @@ Several runs into the same `-o` folder add up their groups, and the last run rew
 
 **ROIs appear where there is no cell (fake cells)** → a smooth blue blob in the cytoplasm was taken for a nucleus. Raise *Nuclei*, or check that Nucleus detection is *Texture + merge*.
 
-**ROIs are too large (include background) / too small** → raise / lower *Cell area* (default 0.12).
+**ROIs are too large (include background) / too small** → raise / lower *Cell area*, watching the yellow mask in the preview (section 7). (Previous detection: *Cell area (previous detection)*, default 0.12.)
 
-**Very few cells are analysed** → most were left out because they touch the image edge. Keep *Keep cells whose tip touches the border* on; best of all, image cells that lie fully inside the field.
+**Very few cells are analysed** → most were left out because they touch the image edge. Keep *Keep cells that touch the border* on; best of all, image cells that lie fully inside the field.
 
 **No green+ cells** → lower *Green+ cell: bright green ≥*, or *Green+ (bright green)* in the preview; check the yellow area in the Green+ / − cells tab.
 

@@ -50,15 +50,24 @@ def cli(argv):
     ap.add_argument('--mito-method', choices=('split', 'otsu'), default='split')
     ap.add_argument('--no-dim-nuclei', action='store_true', help='only in-focus nuclei seed a cell')
     ap.add_argument('--no-edge-trim', action='store_true',
-                    help='do not rescue frame-touching cells by cutting their tip off along a mito-free line')
+                    help='do not keep frame-touching cells by trimming them (cytosol: to 1 um inside the frame; '
+                         'mito: cutting their tip off along a mito-free line)')
+    ap.add_argument('--cell-method', choices=('cytosol', 'mito'), default='cytosol',
+                    help='cell ROI detection: cytosol = Cytosol Analysis / Cytosol Viewer algorithm '
+                         '(mito_app/cytosol_cells.py), mito = the earlier detection of this app')
+    ap.add_argument('--cell-channel', choices=('red', 'green'), default='red',
+                    help='cytosol detection: channel whose dim signal outlines the cells')
     ap.add_argument('--nuclei-method', choices=('texture_merge', 'texture', 'otsu'), default='texture_merge',
-                    help='nucleus detection (see mito_app/nuclei.py)')
+                    help='nucleus detection of --cell-method mito (see mito_app/nuclei.py)')
     ap.add_argument('--green-pos-percent', type=float, default=2.0,
                     help='green-positive cell: bright green covers at least this %% of the cytoplasm')
     ap.add_argument('--thr-nuclei', type=float, default=0.0,
-                    help='manual nucleus threshold on the flattened (texture) / smoothed (otsu) blue; 0 = auto')
+                    help='manual nucleus threshold on the smoothed blue (cytosol, otsu) / flattened blue (texture); '
+                         '0 = auto')
+    ap.add_argument('--thr-cell', type=float, default=0.0,
+                    help='cytosol detection: manual cell threshold in cell-channel units; 0 = Otsu')
     ap.add_argument('--cell-fg-level', type=float, default=0.12,
-                    help='cell area: mito density (red at 3 um / its 99th percentile) above this level')
+                    help='--cell-method mito: cell area = mito density (red at 3 um / its 99th percentile) above this')
     ap.add_argument('--thr-mito', type=float, default=0.0,
                     help='manual mito threshold on the preprocessed red (rolling ball 1.5 um, sigma 0.7 px); 0 = auto')
     ap.add_argument('--thr-green-bright', type=float, default=0.0,
@@ -74,6 +83,7 @@ def cli(argv):
                         mito_method=A.mito_method, green_pos_percent=A.green_pos_percent,
                         dim_nuclei=not A.no_dim_nuclei, trim_edge_cells=not A.no_edge_trim,
                         nuclei_method=A.nuclei_method, thr_nuclei=A.thr_nuclei, cell_fg_level=A.cell_fg_level,
+                        cell_method=A.cell_method, cell_channel=A.cell_channel, thr_cell=A.thr_cell,
                         thr_mito=A.thr_mito, thr_green_bright=A.thr_green_bright, thr_puncta=A.thr_puncta)
     try:
         roles = pipeline.imgio.parse_roles(A.czi_channels) if A.czi_channels else None

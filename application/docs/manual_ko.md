@@ -153,17 +153,19 @@ ZEN에서 저장한 `.czi` 파일은 한 시야의 모든 채널을 담고 있�
 | Review and edit the cell ROIs before the analysis | 켜짐 | 세포 ROI를 찾은 뒤 멈추고 검토 창을 엶 (6-1절) | 수정 없이 자동으로 끝까지 돌릴 때 끔 |
 | Mito segmentation | Split objects | 미토콘드리아를 나누는 방식. *Split objects*: 국소 임계값 + 붙은 미토를 어둡고 좁은 접촉점에서 나눔 (조각화 지표 포함). *MiNA classic*: 세포마다 Otsu 하나 (Fiji MiNA와 같은 방식) | Fiji MiNA 결과와 직접 비교할 때만 MiNA classic |
 | Exclude cells that share a weak border | 꺼짐 | 경계가 뚜렷하지 않은 이웃 세포 쌍(핵 두 개처럼 보이는 세포)을 분석에서 뺌 | 세포가 빽빽하게 붙어 경계가 불확실한 데이터에서 보수적으로 볼 때 |
-| Keep cells whose tip touches the border | 켜짐 | 핵은 안쪽인데 끝부분만 가장자리에 닿은 세포를, 미토가 끊기는 선에서 잘라 분석에 포함 (잘린 부분은 빗금으로 표시) | 잘린 세포를 아예 빼고 싶으면 끔 |
+| Keep cells that touch the border | 켜짐 | 가장자리에 닿은 세포를 잘라서 분석에 포함 (잘린 부분은 빗금으로 표시). Cytosol Analysis 검출은 가장자리에서 1 µm 안쪽으로 자르고(Cytosol Viewer와 같음), 이전 검출은 미토가 끊기는 선에서 자름 | 잘린 세포를 아예 빼고 싶으면 끔 |
 | Also analyse cells touching the image border | 꺼짐 | 가장자리에 닿은 세포도 분석 | 보통은 켜지 마세요 (잘린 세포가 섞임) |
 | Minimum cell area | 250 µm² | 이보다 작은 세포 ROI는 버림 | 세포가 아주 작은 세포주면 낮춤 |
 | Weak-border threshold | 0.000 | "약한 경계" 판정 기준 (위의 Exclude 옵션과 함께) | 거의 바꿀 일 없음 |
 | Pixel size (0 = auto) | 0 | 0이면 파일에서 읽음. 값을 넣으면 **모든 이미지**에 그 값 사용 | 모든 파일의 픽셀 정보가 틀렸거나 없을 때 |
 | Green puncta threshold | 1.00 × | 자동 puncta 임계값에 곱하는 값. 1보다 크면 더 밝은 점만, 작으면 더 많이 | puncta가 너무 많이/적게 잡힐 때 (또는 7절 수동 값) |
 | Minimum mito object | 0.05 µm² | 이보다 작은 미토 조각은 미토 조각 표에서 뺌 | 잡음 점이 많을 때 높임 |
-| Nucleus detection | Texture + merge | 핵 찾는 방식. 염색질 무늬로 진짜 핵만 고르고, 휜 핵은 하나로, 붙은 핵은 둘로. *Texture, no merge*, *Global Otsu (old)* 도 선택 가능 | 기본값 권장. 핵 염색이 아주 깨끗하면 Otsu도 됨 |
-| Dim (out-of-focus) nuclei also get their own cell | 켜짐 | 초점이 흐린 핵도 자기 세포를 가짐 (옆 세포에 미토가 넘어가지 않게) | 거의 항상 켬 |
+| Cell detection | Cytosol Analysis | 세포 ROI를 찾는 방식. *Cytosol Analysis*: Cytosol Viewer의 자동 검출과 같은 알고리즘. Cell channel을 아주 밝게(포화) 만들어 세포질 전체를 채우고, 핵(파란 채널 Otsu)마다 세포 하나씩 세포 사이 어두운 틈까지 키움. 같은 이미지·같은 설정이면 Cytosol Viewer와 픽셀 단위로 같은 ROI. *Previous Mito Analyzer detection*: 1.5.0까지의 검출 | 예전 결과와 똑같이 맞춰야 할 때만 Previous |
+| Cell channel | Red (mito) | Cytosol Analysis 검출에서 세포 윤곽을 잡는 채널 (Cytosol Viewer의 "배경 신호" 채널) | 세포 전체에 퍼진 약한 신호가 green 쪽에 있으면 Green |
+| Nucleus detection | Texture + merge | 핵 찾는 방식. 염색질 무늬로 진짜 핵만 고르고, 휜 핵은 하나로, 붙은 핵은 둘로. *Texture, no merge*, *Global Otsu (old)* 도 선택 가능. **Previous 검출에서만** 쓰임 (Cytosol Analysis 검출은 핵을 Otsu로 찾음) | 기본값 권장. 핵 염색이 아주 깨끗하면 Otsu도 됨 |
+| Dim (out-of-focus) nuclei also get their own cell | 켜짐 | 초점이 흐린 핵도 자기 세포를 가짐 (옆 세포에 미토가 넘어가지 않게). Previous 검출에서만 쓰임 | 거의 항상 켬 |
 | Green+ cell: bright green ≥ | 2.0 % | 세포질 중 밝은 green이 이 비율 이상이면 green+ (발현 세포) | 발현이 약하면 낮춤, 배경이 밝으면 높임 |
-| Thresholds | 모두 auto | 5가지 임계값을 자동 또는 수동으로 (7절) | 자동 결과가 맞지 않을 때 |
+| Thresholds | 모두 auto | 임계값을 자동 또는 수동으로 (7절) | 자동 결과가 맞지 않을 때 |
 
 ## 6-1. 세포 ROI 검토와 수정
 Options의 **Review and edit the cell ROIs before the analysis** (기본: 켜짐)가 켜져 있으면, Run all은 세포 ROI를 찾은 뒤 잠깐 멈추고 아래 창을 엽니다. 여기서 확인·수정한 ROI로 나머지 분석이 진행됩니다.
@@ -228,8 +230,9 @@ Options의 **Review and edit the cell ROIs before the analysis** (기본: 켜짐
 
 | 임계값 | 정하는 것 | 너무 낮으면 | 너무 높으면 |
 |---|---|---|---|
-| Nuclei | 핵 후보 | 세포질 덩어리도 핵 → 가짜 세포 | 흐린 핵을 놓침 → 두 세포가 한 ROI |
-| Cell area | 세포 영역 (미토 밀도 기준, 0–1) | 배경까지 세포에 포함 | 세포가 작게 잡힘 |
+| Nuclei | 핵 후보 (Cytosol Analysis 검출: 약하게 스무딩한 파란 채널 값) | 세포질 덩어리도 핵 → 가짜 세포 | 흐린 핵을 놓침 → 그 세포가 없어짐 |
+| Cell area | 세포 영역: Cell channel을 포화·스무딩한 값 (Cytosol Viewer의 "세포 threshold"와 같은 단위) | 배경까지 세포에 포함 | 세포가 작게 잡힘 |
+| Cell area (previous detection) | Previous 검출의 세포 영역 (미토 밀도 기준, 0–1) | 배경까지 세포에 포함 | 세포가 작게 잡힘 |
 | Mitochondria | 미토 마스크 | 배경이 미토로 잡힘, 조각이 붙음 | 흐린 미토를 놓침, 과하게 쪼개짐 |
 | Green+ (bright green) | 발현 세포 판정용 밝은 green | green− 세포가 green+ 로 | 약한 발현 세포를 놓침 |
 | Green puncta | 밝은 green 점 | 잡음이 점으로 | 실제 점을 놓침 |
@@ -389,9 +392,9 @@ Cytosol Viewer ROI로 분석: `--rois ROI폴더` (또는 zip 파일들). 이미�
 
 **세포가 아닌 곳에 ROI가 생겨요 (가짜 세포)** → 세포질의 매끈한 파란 덩어리가 핵으로 잡힌 경우. *Nuclei* 를 높이거나 Nucleus detection이 *Texture + merge* 인지 확인하세요.
 
-**ROI가 배경까지 넓어요 / 너무 작아요** → *Cell area* 를 높이거나(넓을 때) 낮춥니다(작을 때). 0.12가 기본.
+**ROI가 배경까지 넓어요 / 너무 작아요** → *Cell area* 를 높이거나(넓을 때) 낮춥니다(작을 때). 7절 미리보기에서 노란 마스크를 보며 맞추세요. (Previous 검출이면 *Cell area (previous detection)*, 0.12가 기본.)
 
-**분석된 세포가 너무 적어요** → 대부분 가장자리에 닿아 빠진 세포입니다. *Keep cells whose tip touches the border* 가 켜져 있는지 확인하고, 세포가 화면 안에 들어오게 촬영하는 것이 가장 좋습니다.
+**분석된 세포가 너무 적어요** → 대부분 가장자리에 닿아 빠진 세포입니다. *Keep cells that touch the border* 가 켜져 있는지 확인하고, 세포가 화면 안에 들어오게 촬영하는 것이 가장 좋습니다.
 
 **green+ 세포가 하나도 없어요** → *Green+ cell: bright green ≥* 를 낮추거나 미리보기에서 *Green+ (bright green)* 를 낮춥니다. Green+ / − cells 탭에서 노란 영역을 확인하세요.
 

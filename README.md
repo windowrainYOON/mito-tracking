@@ -64,5 +64,6 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 7. **임계값 수동 조정**: Options → *Thresholds* 에서 핵, 세포 영역, 미토콘드리아, 밝은 green, puncta 임계값을 자동 또는 수동(모든 이미지 일괄)으로 정합니다. *Preview / adjust thresholds…* 에서 슬라이더를 움직이며 마스크를 바로 보고, 모든 이미지 또는 그 이미지에만 적용할 수 있습니다.
 8. **세포 ROI 검토·수정**: 기본으로 Run all이 세포 ROI를 찾은 뒤 멈추고 검토 창을 엽니다. 선택·더하기·빼기·새 세포 그리기·삭제·합치기·되돌리기로 고친 뒤 확정하면 그 ROI로 분석이 이어집니다.
 9. **Cytosol Viewer ROI 사용**: Cytosol Viewer에서 저장한 이미지별 RoiSet `.zip`(세포·핵·세포질)을 **Cell ROI files…** 로 넣으면(또는 표에 끌어다 놓으면) 이름으로 이미지와 짝지어 그 ROI로 분석합니다 (명령줄: `--rois 폴더`). 분석에 쓴 세포·미토 ROI는 샘플마다 `<sample>_used_ROIs/` 에 저장됩니다.
+10. **세포 ROI 자동 검출 = Cytosol Analysis 알고리즘**: 세포 ROI는 기본으로 Cytosol Viewer의 자동 검출과 같은 알고리즘으로 찾습니다 (같은 이미지·설정이면 같은 ROI, 같은 세포 번호). Options의 *Cell detection* 에서 이전 검출로 되돌릴 수 있습니다 (명령줄: `--cell-method mito`).
 
 설명 PDF 는 `cd application && .venv/bin/python tools/make_algorithm_pdf.py RED.tif GREEN.tif BLUE.tif -o docs/Mito_Analyzer_algorithm.pdf` 로 현재 코드 기준으로 다시 만들 수 있습니다.

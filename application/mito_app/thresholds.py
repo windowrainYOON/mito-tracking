@@ -1,23 +1,23 @@
 """Threshold preview: the image each threshold is applied to, its automatic value and the resulting mask,
 for one image set. Used by the GUI's threshold dialog; the pipeline applies the same formulas
-(nuclei.threshold_image, cell_roi.cell_density, mito_objects.preprocess, green_cells.bright_image,
-green.tophat), so a value tuned here gives the same mask in the analysis.
+(nuclei.threshold_image, cytosol_cells.nucleus_image / cell_image, cell_roi.cell_density, mito_objects.preprocess,
+green_cells.bright_image, green.tophat), so a value tuned here gives the same mask in the analysis.
 
 Every manual threshold is a value of that image (not a factor), so one value applies to every image of a
 batch; the automatic value of the image being previewed is shown next to it for reference."""
 import numpy as np
 from skimage import morphology
 
-from . import cell_roi, green as green_q, green_cells, mina, mito_objects, nuclei
+from . import cell_roi, cytosol_cells, green as green_q, green_cells, mina, mito_objects, nuclei
 
-KEYS = ('thr_nuclei', 'cell_fg_level', 'thr_mito', 'thr_green_bright', 'thr_puncta')
+KEYS = ('thr_nuclei', 'thr_cell', 'cell_fg_level', 'thr_mito', 'thr_green_bright', 'thr_puncta')
 
 
 class Preview:
     """Lazily computed threshold images of one image set (each is computed once, then reused)."""
 
     def __init__(self, red_path, green_path, blue_path, pixel_size_um=0.0, nuclei_method='texture_merge',
-                 sensitivity=1.0):
+                 sensitivity=1.0, cell_method='cytosol', cell_channel='red'):
         a, g, px = cell_roi.load_green(green_path)
         self.px = pixel_size_um if pixel_size_um > 0 else (px or cell_roi.REF_PX_UM)
         self.k = float(np.clip(cell_roi.REF_PX_UM / self.px, 0.2, 5))
@@ -26,13 +26,19 @@ class Preview:
         self.red, _ = mina.load_channel(red_path, 0)
         self.green, _ = mina.load_channel(green_path, 1)
         self.method, self.sens = nuclei_method, sensitivity
+        self.cell_method, self.cell_channel = cell_method, cell_channel
+        self.cell_bg = self.green if cell_channel == 'green' else self.red
         self._img, self._auto = {}, {}
 
     def image(self, key):
         """(image the threshold is applied to, automatic threshold)."""
         if key not in self._img:
-            if key == 'thr_nuclei':
+            if key == 'thr_nuclei' and self.cell_method == 'cytosol':
+                im, t = cytosol_cells.nucleus_image(self.blue, self.px)
+            elif key == 'thr_nuclei':
                 im, t = nuclei.threshold_image(self.blue, self.k, self.method)
+            elif key == 'thr_cell':
+                im, t = cytosol_cells.cell_image(self.cell_bg, self.blue, self.px)
             elif key == 'cell_fg_level':
                 im, t = cell_roi.cell_density(self.red, self.px), 0.12
             elif key == 'thr_mito':
@@ -73,7 +79,7 @@ class Preview:
 
     def display(self, key):
         """Grey image to draw the mask on (0-1)."""
-        base = {'thr_nuclei': self.blue, 'cell_fg_level': self.red, 'thr_mito': self.red,
+        base = {'thr_nuclei': self.blue, 'thr_cell': self.cell_bg, 'cell_fg_level': self.red, 'thr_mito': self.red,
                 'thr_green_bright': self.green, 'thr_puncta': self.green}[key].astype(float)
         hi = np.percentile(base, 99.7) or 1.0
         return np.clip(base / hi, 0, 1)
