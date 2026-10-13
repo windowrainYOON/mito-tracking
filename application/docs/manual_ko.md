@@ -207,8 +207,8 @@ Options의 **Review and edit the cell ROIs before the analysis** (기본: 켜짐
 세포 ROI를 Cytosol Viewer(cytosol-analysis)에서 이미 만들어 두었다면, 앱이 찾는 대신 그 ROI로 분석할 수 있습니다.
 
 1. Cytosol Viewer의 **세포질 ROI** 탭에서 **모든 이미지 ROI 저장 (폴더)…** 로 이미지마다 `<이미지>_RoiSet.zip` 을 저장합니다. 그 안에 세포(`cellNNN`), 핵(`nucNNN`), 세포질(`cytoNNN`) ROI가 들어 있습니다. `.roi` 파일 하나도 됩니다.
-2. Mito Analyzer에 이미지를 넣은 뒤 **Cell ROI files…** 로 zip 파일들을 고르거나, zip 파일이나 그 폴더를 표에 끌어다 놓습니다.
-3. 파일 이름으로 이미지와 짝지어집니다 (`New-01_RoiSet.zip` → `New-01.czi`, `Processed_New01_…` 와 `New01_RoiSet.zip` 처럼 한쪽 이름이 다른 쪽 끝과 같아도 됨). 짝지어진 줄은 **Cell ROIs** 열에 파일 이름이 초록색으로 표시되고, 없는 줄은 `detect`(앱이 찾음)입니다.
+2. **Add folder…** 로 폴더를 고르거나 폴더를 끌어다 놓으면 하위 폴더까지 이미지와 ROI 파일을 함께 찾아 넣습니다 (Mito Analyzer 결과 폴더 안의 ROI는 건너뜀). 이미지를 먼저 넣었다면 **Cell ROI files…** 로 zip 파일들을 고르거나, zip 파일이나 그 폴더를 표에 끌어다 놓습니다.
+3. Cytosol Viewer가 ROI에 넣은 **이미지 ID**(예: `A9F3-2596-73B6`, CZI 파일 GUID 등으로 만든 값)가 있으면 그것으로 이미지와 짝지어집니다. 파일 이름이 달라도, 이름에 ID만 들어 있어도 맞게 붙고, 표에 `✓ 파일이름`으로 표시됩니다. ID가 없으면 파일 이름으로 짝지어집니다 (`New-01_RoiSet.zip` → `New-01.czi`, `Processed_New01_…` 와 `New01_RoiSet.zip` 처럼 한쪽 이름이 다른 쪽 끝과 같아도 됨). 짝지어진 줄은 **Cell ROIs** 열에 파일 이름이 초록색으로 표시되고, 없는 줄은 `detect`(앱이 찾음)입니다.
 4. 짝이 안 맞으면 그 줄의 **Cell ROIs** 칸을 더블클릭해 직접 고릅니다. 같은 칸에서 **Detect them instead** 를 누르면 다시 앱이 찾습니다.
 
 - 세포 ROI가 세포 영역, 핵 ROI가 핵으로 쓰입니다. 세포 ROI 없이 세포질 ROI만 있으면 세포질의 바깥 경계가 세포, 안쪽 구멍이 핵입니다.

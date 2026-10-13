@@ -215,8 +215,8 @@ Finishing
 If you already drew or checked the cell ROIs in Cytosol Viewer (cytosol-analysis), the analysis can use them instead of finding its own.
 
 1. In Cytosol Viewer's **세포질 ROI** tab, **모든 이미지 ROI 저장 (폴더)…** writes one `<image>_RoiSet.zip` per image, holding cell (`cellNNN`), nucleus (`nucNNN`) and cytosol (`cytoNNN`) ROIs. A single `.roi` file works too.
-2. Add the images to Mito Analyzer, then press **Cell ROI files…** and pick the zip files, or drop the zip files (or their folder) on the table.
-3. Files are matched to the image sets by name (`New-01_RoiSet.zip` → `New-01.czi`; one name may also end with the other, e.g. `Processed_New01_…` and `New01_RoiSet.zip`). A matched row shows the file name in green in the **Cell ROIs** column; the others read `detect` (the app finds them).
+2. **Add folder…** (or dropping a folder) finds the images and the ROI files in it and all its subfolders together (ROIs inside Mito Analyzer result folders are skipped). With the images already added, press **Cell ROI files…** and pick the zip files, or drop the zip files (or their folder) on the table.
+3. When the file carries Cytosol Viewer's **image ID** (e.g. `A9F3-2596-73B6`, derived from the CZI file GUID and similar; stored in the ROIs or written in the file name), it is matched by that ID, whatever the file names; such rows read `✓ file name`. Otherwise files are matched to the image sets by name (`New-01_RoiSet.zip` → `New-01.czi`; one name may also end with the other, e.g. `Processed_New01_…` and `New01_RoiSet.zip`). A matched row shows the file name in green in the **Cell ROIs** column; the others read `detect` (the app finds them).
 4. If a file did not match, double-click that row's **Cell ROIs** cell and choose it. **Detect them instead** in the same place goes back to automatic ROIs.
 
 - Cell ROIs are the cell areas, nucleus ROIs the nuclei. With only cytosol ROIs, the outer border of each is the cell and its hole the nucleus.

@@ -18,6 +18,8 @@ from PySide6.QtWidgets import (
 from . import __version__, imgio, nuclei, pipeline, roi_io, stats
 
 ROI_FILTER = 'ImageJ ROIs from Cytosol Viewer (*.zip *.roi);;All files (*)'
+ADD_FILTER = ('Images and Cytosol Viewer ROIs (*.tif *.tiff *.czi *.zip *.roi);;Images (*.tif *.tiff *.czi);;'
+              'ImageJ ROIs from Cytosol Viewer (*.zip *.roi);;All files (*)')
 TIFF_FILTER = 'Images (*.tif *.tiff *.czi);;TIFF images (*.tif *.tiff);;Zeiss CZI (*.czi);;All files (*)'
 GREEN_COLORS = {'positive': '#2CA02C', 'negative': '#7F7F7F'}
 CELL_COLORS = ['#4C9BE8', '#F28E2B', '#59A14F', '#E15759', '#B07AA1', '#EDC948', '#76B7B2', '#FF9DA7',
@@ -257,15 +259,19 @@ class JobTable(QTableWidget):
         it = self.item(r, self.ROI)
         return it.data(Qt.UserRole) if it else None
 
-    def set_roi_file(self, r, path):
-        """Cell ROIs of row r: a Cytosol Viewer RoiSet (.zip / .roi), or None = detect them."""
+    def set_roi_file(self, r, path, how=''):
+        """Cell ROIs of row r: a Cytosol Viewer RoiSet (.zip / .roi), or None = detect them.
+        `how`: how the file was matched to the image ('ID …', 'name', 'chosen')."""
         it = QTableWidgetItem(os.path.basename(path) if path else 'detect')
         it.setFlags(it.flags() & ~Qt.ItemIsEditable)
         it.setData(Qt.UserRole, path or None)
-        it.setToolTip((f'Cell, nucleus and cytosol ROIs from {path}' if path else
+        matched = {'name': ' (matched by file name)', 'chosen': ''}.get(how, f' (matched by image {how})' if how else '')
+        it.setToolTip((f'Cell, nucleus and cytosol ROIs from {path}{matched}' if path else
                        'Cell ROIs are found by the app') + '. Double-click (or Cell ROI files…) to change.')
         if path:
             it.setBackground(QColor(120, 200, 140, 70))
+            if how.startswith('ID'):
+                it.setText(f'✓ {os.path.basename(path)}')
         self.setItem(r, self.ROI, it)
 
     def set_path(self, r, key, path):
@@ -1808,12 +1814,13 @@ class MainWindow(QMainWindow):
         return os.path.dirname(self.table.job(n - 1)['red']) if n else ''
 
     def browse_files(self):
-        paths, _ = QFileDialog.getOpenFileNames(self, 'Choose TIFF images (all channels) or CZI files',
-                                                self.last_dir(), TIFF_FILTER)
+        paths, _ = QFileDialog.getOpenFileNames(self, 'Choose TIFF images (all channels) or CZI files, and their '
+                                                'Cytosol Viewer ROIs if any', self.last_dir(), ADD_FILTER)
         self.add_paths(paths)
 
     def browse_folder(self):
-        d = QFileDialog.getExistingDirectory(self, 'Choose a folder of TIFF / CZI images', self.last_dir())
+        d = QFileDialog.getExistingDirectory(self, 'Choose a folder of TIFF / CZI images (Cytosol Viewer ROIs in it, '
+                                             'in any subfolder, are matched to the images)', self.last_dir())
         if d:
             self.add_paths([d])
 
@@ -1844,6 +1851,7 @@ class MainWindow(QMainWindow):
             msg += (f' ({n_czi} CZI: channel roles guessed from the channel names or reused; check the Red / Green / Blue '
                     'columns and use Channel roles… to change them)')
         self.statusBar().showMessage(msg)
+        leftover = [f for f in leftover if not roi_io.is_cytosol_export(f)]   # Cytosol Viewer's own TIFF exports
         if leftover:
             bad_czi = [f for f in leftover if imgio.is_czi(f)]
             tif = [f for f in leftover if not imgio.is_czi(f)]
@@ -1875,12 +1883,15 @@ class MainWindow(QMainWindow):
         """Match Cytosol Viewer RoiSets to the rows by name; report what matched."""
         n = self.table.rowCount()
         jobs = [self.table.job(r) for r in range(n)]
-        found, unmatched = roi_io.match_roi_files(files, jobs)
+        how = {}
+        found, unmatched = roi_io.match_roi_files(files, jobs, how)
         if not found and len(files) == 1 and len(jobs) == 1:
-            found, unmatched = {0: files[0]}, []
+            found, unmatched, how = {0: files[0]}, [], {0: 'chosen'}
         for r, f in found.items():
-            self.table.set_roi_file(r, f)
-        self.statusBar().showMessage(f'Cell ROIs from Cytosol Viewer set for {len(found)} of {n} image set(s)')
+            self.table.set_roi_file(r, f, how.get(r, ''))
+        n_id = sum(h.startswith('ID') for h in how.values())
+        self.statusBar().showMessage(f'Cell ROIs from Cytosol Viewer set for {len(found)} of {n} image set(s)'
+                                     + (f' ({n_id} by image ID, {len(found) - n_id} by file name)' if found else ''))
         if unmatched:
             QMessageBox.information(
                 self, 'Cell ROI files', f'{len(found)} file(s) matched an image set. These matched none (the file name '
@@ -1903,7 +1914,7 @@ class MainWindow(QMainWindow):
             path, _ = QFileDialog.getOpenFileName(self, 'Cell ROIs from Cytosol Viewer',
                                                   os.path.dirname(cur) if cur else self.last_dir(), ROI_FILTER)
             if path:
-                self.table.set_roi_file(r, path)
+                self.table.set_roi_file(r, path, 'chosen')
             return
         key = next((k for k, col in JobTable.CH_COL.items() if col == c), None)
         if not key or self.busy():

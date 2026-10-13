@@ -22,12 +22,130 @@ def is_roi_file(path):
 def roi_key(path):
     """'New-01_RoiSet.zip' -> 'new-01': the image name a Cytosol Viewer RoiSet belongs to."""
     stem = os.path.splitext(os.path.basename(str(path)))[0]
-    return _ROISET_TAIL.sub('', stem).strip().lower()
+    stem = _ID_RX.sub('', stem).strip('_- ')
+    return _ROISET_TAIL.sub('', stem).strip('_- ').lower()
+
+
+# ---- image IDs (Cytosol Viewer, cytosol/imageid.py) ---------------------------
+# Cytosol Viewer gives every image an ID like 'A9F3-2596-73B6' (SHA-1 of what the microscope wrote into the
+# file: the CZI file GUID, the OME-TIFF UUID, an ID it embedded in a TIFF it exported, else the file content)
+# and stores it in every ROI of a RoiSet (property 'CytosolImageID') and in exported file names.
+
+ID_KEY = 'CytosolImageID'
+_ID_RX = re.compile(r'(?<![0-9A-Za-z])([0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4})(?:-(HT|FL))?(?![0-9A-Za-z])')
+
+
+def short_id(key):
+    import hashlib
+    h = hashlib.sha1(key.encode('utf-8')).hexdigest()[:12].upper()
+    return f'{h[:4]}-{h[4:8]}-{h[8:]}'
+
+
+def _content_key(path):
+    """Size plus the first and last MiB of the file (Cytosol Viewer's fallback ID)."""
+    import hashlib
+    size = os.path.getsize(path)
+    h = hashlib.sha1(str(size).encode())
+    with open(path, 'rb') as f:
+        h.update(f.read(1 << 20))
+        if size > 2 << 20:
+            f.seek(-(1 << 20), 2)
+            h.update(f.read())
+    return h.hexdigest()
+
+
+def _czi_guid(path):
+    """Primary file GUID from the ZISRAWFILE header, formatted as czifile does."""
+    import uuid
+    with open(path, 'rb') as f:
+        head = f.read(32 + 48)
+    if len(head) < 80 or not head.startswith(b'ZISRAWFILE'):
+        return None
+    return str(uuid.UUID(bytes=head[32 + 16:32 + 32]))
+
+
+def _tiff_ids(path):
+    """IDs Cytosol Viewer would give a TIFF: the one it embedded on export, else the OME UUID, else the content."""
+    import tifffile
+    try:
+        with tifffile.TiffFile(path) as tif:
+            ij = tif.imagej_metadata or {}
+            props = ij.get('Properties') or {}
+            iid = props.get(ID_KEY) if isinstance(props, dict) else None
+            if not iid:
+                m = re.search(ID_KEY + r'\s*[=:]\s*(\S+)', str(ij.get('Info') or ''))
+                iid = m.group(1) if m else None
+            if iid:
+                return {str(iid).upper()}
+            if tif.is_ome and tif.ome_metadata:
+                m = re.search(r'<OME[^>]*\sUUID="([^"]+)"', tif.ome_metadata)
+                if m:
+                    return {short_id(f'OME|{m.group(1)}')}
+    except Exception:
+        pass
+    return {short_id(f'FILE|{_content_key(path)}')}
+
+
+_id_cache = {}
+
+
+def image_ids(path):
+    """Cytosol Viewer image IDs of one image file (CZI or TIFF); cached by path, size and time."""
+    try:
+        st = os.stat(path)
+    except OSError:
+        return set()
+    key = (os.path.abspath(path), st.st_size, st.st_mtime)
+    if key not in _id_cache:
+        ids = set()
+        try:
+            if path.lower().endswith('.czi'):
+                g = _czi_guid(path)
+                ids = {short_id(f'CZI|{g}')} if g else {short_id(f'FILE|{_content_key(path)}')}
+            else:
+                ids = _tiff_ids(path)
+        except Exception:
+            pass
+        _id_cache[key] = ids
+    return _id_cache[key]
+
+
+def job_ids(job):
+    """Cytosol Viewer IDs an image set can be known by (its CZI, or any of its three TIFFs)."""
+    try:
+        from . import imgio
+    except ImportError:
+        import imgio
+    files = {imgio.split_ref(job[k])[0] for k in ('red', 'green', 'blue') if job.get(k)}
+    if job.get('czi'):
+        files.add(job['czi'])
+    out = set()
+    for f in files:
+        out |= image_ids(f)
+    return out
+
+
+def roi_file_id(path):
+    """Image ID of a RoiSet: stored in its ROIs ('CytosolImageID'), else written in its file name."""
+    try:
+        for r in _read_rois(path):
+            props = getattr(r, 'properties', None) or {}
+            if isinstance(props, dict) and props.get(ID_KEY):
+                return str(props[ID_KEY]).upper()
+    except Exception:
+        pass
+    m = _ID_RX.search(os.path.basename(str(path)))
+    if m:
+        return m.group(1).upper() + (f'-{m.group(2).upper()}' if m.group(2) else '')
+    return None
 
 
 def _keys(job):
     """Names an image set may be known by: sample name, CZI / TIFF file stems (with and without channel tags)."""
-    from . import imgio, pipeline
+    try:
+        from . import imgio, pipeline
+    except ImportError:
+        import imgio, pipeline
     out = {str(job.get('name') or '').lower()}
     for k in ('czi', 'red', 'green', 'blue'):
         p = job.get(k)
@@ -39,33 +157,90 @@ def _keys(job):
     return out - {''}
 
 
-def match_roi_files(files, jobs):
-    """{job index: roi file} by name, and the files that matched no job."""
+def match_roi_files(files, jobs, how=None):
+    """{job index: roi file} and the files that matched no job. A file is matched by the image ID inside it or
+    in its name (Cytosol Viewer), else by file name. `how`, if a dict, gets {job index: 'ID …' | 'name'}."""
+    found, used = {}, set()
+    ids = [(f, roi_file_id(f)) for f in files]
+    if any(i for _, i in ids):
+        jids = [job_ids(j) for j in jobs]
+        for f, iid in ids:
+            if not iid:
+                continue
+            base = iid.rsplit('-', 1)[0] if iid.count('-') == 3 else iid
+            hit = next((n for n, js in enumerate(jids) if n not in found and (iid in js or base in js)), None)
+            if hit is not None:
+                found[hit] = f
+                used.add(f)
+                if how is not None:
+                    how[hit] = f'ID {iid}'
     by_key = {}
     for f in files:
-        by_key.setdefault(roi_key(f), []).append(f)
-    found, used = {}, set()
+        if f not in used:
+            by_key.setdefault(roi_key(f), []).append(f)
     for i, j in enumerate(jobs):
+        if i in found:
+            continue
         keys = _keys(j)
-        hit = next((by_key[k][0] for k in keys if k in by_key), None)
+        hit = next((by_key[k][0] for k in keys if k in by_key and by_key[k][0] not in used), None)
         if hit is None:   # 'Processed_New01' vs 'New01' and the like: one name ends with the other
-            hit = next((fs[0] for k, fs in by_key.items() if k and any(
+            hit = next((fs[0] for k, fs in by_key.items() if k and fs[0] not in used and any(
                 n.endswith(k) or k.endswith(n) for n in keys if len(n) >= 3 and len(k) >= 3)), None)
         if hit is not None:
             found[i] = hit
             used.add(hit)
+            if how is not None:
+                how[i] = 'name'
     return found, [f for f in files if f not in used]
 
 
+def _is_roiset(path):
+    """A .roi file, or a .zip that holds only .roi entries."""
+    if path.lower().endswith('.roi'):
+        return True
+    try:
+        with zipfile.ZipFile(path) as z:
+            names = z.namelist()
+    except Exception:
+        return False
+    return bool(names) and all(n.lower().endswith('.roi') or n.endswith('/') for n in names)
+
+
+def _results_dir(d, files):
+    """A folder Mito Analyzer wrote (its RoiSets there are results, not inputs)."""
+    return d.endswith('_used_ROIs') or any(f.endswith('_results.xlsx') for f in files)
+
+
 def collect_roi_files(paths):
-    """RoiSet .zip / .roi files among `paths` (folders are searched one level deep)."""
+    """RoiSet .zip / .roi files among `paths`; folders are searched recursively, skipping Mito Analyzer
+    result folders."""
     out = []
     for p in paths:
         if os.path.isdir(p):
-            out += sorted(os.path.join(p, f) for f in os.listdir(p) if is_roi_file(f) and not f.startswith('.'))
+            for d, sub, files in os.walk(p):
+                sub[:] = sorted(x for x in sub if not x.startswith('.'))
+                if _results_dir(d, files):
+                    sub[:] = []
+                    continue
+                out += [os.path.join(d, f) for f in sorted(files)
+                        if is_roi_file(f) and not f.startswith('.') and _is_roiset(os.path.join(d, f))]
         elif is_roi_file(p):
             out.append(p)
     return out
+
+
+def is_cytosol_export(path):
+    """A TIFF Cytosol Viewer exported (it carries the image ID); not an analysis input by itself."""
+    if not str(path).lower().endswith(('.tif', '.tiff')):
+        return False
+    try:
+        import tifffile
+        with tifffile.TiffFile(path) as tif:
+            ij = tif.imagej_metadata or {}
+        props = ij.get('Properties') or {}
+        return bool((isinstance(props, dict) and props.get(ID_KEY)) or ID_KEY in str(ij.get('Info') or ''))
+    except Exception:
+        return False
 
 
 # ---- reading ---------------------------------------------------------------
