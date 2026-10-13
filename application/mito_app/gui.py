@@ -1920,7 +1920,8 @@ class MainWindow(QMainWindow):
         if unmatched:
             QMessageBox.information(
                 self, 'Cell ROI files', f'{len(found)} file(s) matched an image set. These matched none (the file name '
-                'should start with the image name, e.g. New-01_RoiSet.zip for New-01.czi); double-click a row\'s '
+                'should start with the image name, e.g. New-01_RoiSet.zip for New-01.czi; a name that fits images in two '
+                'folders equally well, with neither in the file\'s own folder, is not guessed); double-click a row\'s '
                 'Cell ROIs cell to choose its file:\n' + '\n'.join(os.path.basename(f) for f in unmatched[:20]))
 
     def cell_double_clicked(self, r, c):

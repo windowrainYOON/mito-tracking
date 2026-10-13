@@ -157,9 +157,27 @@ def _keys(job):
     return out - {''}
 
 
+def _job_dir(job):
+    try:
+        from . import imgio
+    except ImportError:
+        import imgio
+    return os.path.dirname(os.path.abspath(imgio.split_ref(job.get('czi') or job.get('red') or '')[0]))
+
+
+def _near(roi, job):
+    """How close a ROI file sits to an image: the length of the folder path they share (same folder = longest)."""
+    try:
+        return len(os.path.commonpath([os.path.dirname(os.path.abspath(roi)), _job_dir(job)]))
+    except ValueError:
+        return 0
+
+
 def match_roi_files(files, jobs, how=None):
     """{job index: roi file} and the files that matched no job. A file is matched by the image ID inside it or
-    in its name (Cytosol Viewer), else by file name. `how`, if a dict, gets {job index: 'ID …' | 'name'}."""
+    in its name (Cytosol Viewer), else by file name. By name, an image in the ROI file's own folder (or closest to
+    it in the folder tree) comes first, so 24h/New-01 and PRD 24h/New-01 each take the RoiSet next to them; a file
+    that fits images in two folders equally well is not used. `how`, if a dict, gets {job index: 'ID …' | 'name'}."""
     found, used = {}, set()
     ids = [(f, roi_file_id(f)) for f in files]
     if any(i for _, i in ids):
@@ -174,23 +192,40 @@ def match_roi_files(files, jobs, how=None):
                 used.add(f)
                 if how is not None:
                     how[hit] = f'ID {iid}'
-    by_key = {}
-    for f in files:
-        if f not in used:
-            by_key.setdefault(roi_key(f), []).append(f)
+    # by name: every (image, file) pair whose names fit, the closest in the folder tree first
+    pairs = []
     for i, j in enumerate(jobs):
         if i in found:
             continue
         keys = _keys(j)
-        hit = next((by_key[k][0] for k in keys if k in by_key and by_key[k][0] not in used), None)
-        if hit is None:   # 'Processed_New01' vs 'New01' and the like: one name ends with the other
-            hit = next((fs[0] for k, fs in by_key.items() if k and fs[0] not in used and any(
-                n.endswith(k) or k.endswith(n) for n in keys if len(n) >= 3 and len(k) >= 3)), None)
-        if hit is not None:
-            found[i] = hit
-            used.add(hit)
-            if how is not None:
-                how[i] = 'name'
+        for f in files:
+            if f in used:
+                continue
+            k = roi_key(f)
+            if k in keys:
+                exact = 1
+            elif k and any(n.endswith(k) or k.endswith(n) for n in keys if len(n) >= 3 and len(k) >= 3):
+                exact = 0     # 'Processed_New01' vs 'New01' and the like: one name ends with the other
+            else:
+                continue
+            pairs.append((_near(f, j), exact, i, f))
+    pairs.sort(key=lambda p: (-p[0], -p[1], p[2]))
+    unsure = set()
+    for near, exact, i, f in pairs:
+        if i in found or f in used or f in unsure:
+            continue
+        # a file that fits two images equally well (same name in two folders at the same distance) or an image
+        # that two files fit equally well is left for the user rather than guessed
+        rival = any(q[:2] == (near, exact) and ((q[3] == f and q[2] != i and q[2] not in found) or
+                                                (q[2] == i and q[3] != f and q[3] not in used and q[3] not in unsure))
+                    for q in pairs)
+        if rival:
+            unsure.add(f)
+            continue
+        found[i] = f
+        used.add(f)
+        if how is not None:
+            how[i] = 'name'
     return found, [f for f in files if f not in used]
 
 
