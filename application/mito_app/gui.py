@@ -1306,6 +1306,12 @@ class AnalysisTab(QWidget):
         self.info = QLabel(''); self.info.setWordWrap(True)
         top = QHBoxLayout(); top.addWidget(QLabel('Results folder')); top.addWidget(self.folder, 1)
         top.addWidget(browse); top.addWidget(load); top.addWidget(self.groups_btn); top.addWidget(self.export_groups_btn)
+        self.browser_btn = QPushButton('Results browser…')
+        self.browser_btn.setToolTip('Look at analysed results without running anything: pick a scope and the '
+                                    'parameters to show, filter, export to Excel, rename groups / conditions / '
+                                    'samples / cells')
+        self.browser_btn.clicked.connect(self.open_browser)
+        top.addWidget(self.browser_btn)
         self.corr = CorrelationTab(pooled=True)
         self.cells = TableTab(); self.mito = TableTab()
         tabs = QTabWidget()
@@ -1342,6 +1348,12 @@ class AnalysisTab(QWidget):
                           f'{n_ds} dataset(s), {n_pr} preset-dataset folder(s): '
                           f'{len(cells)} cells ({n_pos} green+, {len(cells) - n_pos} green−), {len(mito)} mito objects')
 
+
+    def open_browser(self):
+        from .results_browser import open_browser
+        d = os.path.expanduser(self.folder.text().strip())
+        self._browser = open_browser(d if os.path.isdir(d) else '', self.window())
+        self._browser.destroyed.connect(lambda *_: self.load() if self.samples else None)
 
     def export_groups(self):
         if not self.samples:

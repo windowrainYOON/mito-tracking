@@ -20,6 +20,7 @@ English version: [manual_en.md](manual_en.md)
 9. 그룹 만들기
 10. 결과 보기: 샘플별 탭
 11. Analysis 탭: 여러 샘플 통합 분석
+11-5. 결과 조회·수정 창 (Results browser)
 12. 출력 파일
 13. 결과를 해석하는 법
 14. 명령줄(터미널)로 실행
@@ -323,6 +324,30 @@ Options의 **Review and edit the cell ROIs before the analysis** (기본: 켜짐
 
 ### 11-4. Cells / Mito objects (all samples)
 모든 샘플의 세포·미토 표 (그룹·dataset·sample 열 포함). 열 머리를 누르면 정렬됩니다.
+
+### 11-5. 결과 조회·수정 창 (Results browser)
+분석은 하지 않고, 이미 분석된 결과 폴더만 읽어서 보고, 고르고, 엑셀로 내보내고, 이름을 고치는 창입니다. Analysis 탭의 **Results browser…** 로 엽니다 (Analysis 탭에 불러온 폴더가 그대로 열림). 터미널에서 `MitoAnalyzer --results 결과폴더` 로 이 창만 열 수도 있습니다.
+
+1. **Open folder…** 로 결과 폴더를 고릅니다 (하위 폴더까지 모든 샘플을 찾음).
+2. **Scope**: 한 줄이 무엇인지 고릅니다.
+   - *Cells*: 세포 하나가 한 줄
+   - *Mito objects*: 미토 조각 하나가 한 줄
+   - *Green puncta*: green 점 하나가 한 줄
+   - *Images*: 이미지 하나가 한 줄 (그 이미지 세포들의 평균)
+   - *Groups*: 그룹 하나가 한 줄
+   *Images* 와 *Groups* 는 **Values** 에서 세포·미토 조각·puncta 중 무엇의 평균인지 고릅니다. *Groups* 는 **Group statistic** 에서 세포(조각) 하나를 값 하나로 볼지, 이미지 평균 하나를 값 하나로 볼지 정하고, mean / SD / SEM / median / n 중 보일 통계를 고릅니다.
+3. **Parameters**: 체크한 파라미터만 표에 나옵니다. 검색 칸에 `length`, `branch` 처럼 치면 목록이 줄어듭니다. 예: 세포별 평균 미토 길이와 브랜치 수만 보려면 *None* 을 누른 뒤 *Mito object length mean*, *Branch length mean*, *Branches* 를 체크합니다. 고른 파라미터는 다음에 열 때도 그대로입니다.
+4. **필터**: Groups / Conditions / Samples 체크, green+ / green− 세포만, QC를 통과한 세포만(기본; 가장자리에 닿아 분석되지 않은 세포 제외).
+5. **엑셀로 내보내기**:
+   - *Export this table to Excel…*: 보이는 표 그대로 저장합니다 (정렬한 순서 포함).
+   - *Export every scope to Excel…*: 모든 scope를 시트별로 한 파일에 저장합니다.
+   두 경우 모두 *info* 시트에 폴더와 필터가 기록됩니다.
+6. **이름 바꾸기**: 표의 Group, Condition, Sample, Cell 칸을 더블클릭해 고칩니다.
+   - 그룹이나 조건을 고칠 때 같은 이름의 이미지가 여럿이면, 모두 바꿀지 그 이미지만 옮길지 묻습니다.
+   - 칸을 비우면 원래 이름으로 돌아갑니다. *Reset names…* 는 조건·샘플·세포 이름을 모두 원래대로 되돌립니다.
+   - **원본 결과 파일은 바뀌지 않습니다.** 그룹은 결과 폴더의 `groups.csv`, 나머지는 `names.csv` 에 기록됩니다.
+   - 바꾼 이름은 Analysis 탭과 *Export by group* 에도 똑같이 쓰입니다.
+   - Condition은 처음에 입력 폴더 이름(dataset)입니다.
 
 ## 12. 출력 파일
 ```

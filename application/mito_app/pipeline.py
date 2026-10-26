@@ -227,6 +227,61 @@ def read_groups(root):
     return out
 
 
+NAMES_FILE = 'names.csv'
+NAME_FIELDS = ('condition', 'sample', 'cell')   # what the results browser lets the user rename
+
+
+def _names_files(root):
+    files = []
+    for d, dirs, fs in os.walk(root):
+        dirs.sort()
+        if NAMES_FILE in fs:
+            files.append(d)
+    return sorted(files, key=lambda x: -x.count(os.sep))
+
+
+def read_names(root):
+    """User-given names from every names.csv under `root` (a file nearer the root wins):
+    {(absolute sample folder, cell or ''): {'condition' | 'sample' | 'cell': name}}. The result files keep the
+    original names; load_results shows these instead."""
+    out = {}
+    for d in _names_files(root):
+        with open(os.path.join(d, NAMES_FILE), newline='') as f:
+            for r in csv.DictReader(f):
+                if r.get('folder') and r.get('field') in NAME_FIELDS and (r.get('name') or '').strip():
+                    key = (os.path.normpath(os.path.join(d, r['folder'])), (r.get('cell') or '').strip())
+                    out.setdefault(key, {})[r['field']] = r['name'].strip()
+    return out
+
+
+def write_names(root, edits):
+    """Record renames in <root>/names.csv (merged with what is there). `edits`: dicts with folder (absolute sample
+    folder), cell ('' for a condition / sample name), field ('condition', 'sample' or 'cell') and name; an empty
+    name removes the entry, i.e. goes back to the original name."""
+    path = os.path.join(root, NAMES_FILE)
+    rows = {}
+    if os.path.exists(path):
+        with open(path, newline='') as f:
+            rows = {(r['folder'], r.get('cell', ''), r['field']): r for r in csv.DictReader(f) if r.get('folder')}
+    for e in edits:
+        rel = os.path.relpath(e['folder'], root).replace(os.sep, '/')
+        key = (rel, e.get('cell', '') or '', e['field'])
+        if str(e.get('name', '')).strip():
+            rows[key] = dict(folder=rel, cell=key[1], field=e['field'], name=str(e['name']).strip())
+        else:
+            rows.pop(key, None)
+    write_csv(path, sorted(rows.values(), key=lambda r: (r['folder'], r['cell'], r['field'])),
+              ('folder', 'cell', 'field', 'name'))
+
+
+def clear_names(root):
+    """Remove every rename under `root` (the names.csv files); returns how many files were removed."""
+    files = _names_files(root)
+    for d in files:
+        os.remove(os.path.join(d, NAMES_FILE))
+    return len(files)
+
+
 def write_group_tables(results):
     """Pool the per-cell / per-mito tables of all samples in each <preset>-<dataset> folder
     (`<preset>-<dataset>_all_cells.csv`, `…_all_mito.csv`, `…_all_results.xlsx`)."""
@@ -326,13 +381,17 @@ def read_csv(path):
         return [{k: _num(v) for k, v in r.items()} for r in csv.DictReader(f)]
 
 
-def load_results(root):
+def load_results(root, keys=False):
     """Every sample under `root` (any depth): rows of <sample>_per_cell.csv and <sample>_per_mito.csv with
     dataset / preset / sample columns taken from the <dataset>/<preset>-<dataset>/<sample>/ layout, and a group
-    column from groups.csv (default: the dataset).
-    Returns (cell_rows, mito_rows, samples): samples = one dict per sample (folder + those columns)."""
+    column from groups.csv (default: the dataset). Names given in the results browser (names.csv) replace the
+    dataset (condition), sample and cell names.
+    `keys`: rows also get '_folder' (sample folder) and '_cell' (original cell name), for the results browser.
+    Returns (cell_rows, mito_rows, samples): samples = one dict per sample (folder, stem = the sample name in the
+    file names, and those columns)."""
     cells, mito, samples = [], [], []
     groups = read_groups(root)
+    names = read_names(root)
     for d, dirs, files in os.walk(root):
         dirs.sort()
         for f in sorted(files):
@@ -342,12 +401,27 @@ def load_results(root):
             up = os.path.basename(os.path.dirname(d))
             dataset = os.path.basename(os.path.dirname(os.path.dirname(d)))
             preset = up[:-len(dataset) - 1] if dataset and up.endswith('-' + dataset) else up
-            meta = dict(group=groups.get(os.path.normpath(d), dataset), dataset=dataset, preset=preset, sample=name)
-            cells += [dict(meta, **r) for r in read_csv(os.path.join(d, f))]
+            nd = os.path.normpath(d)
+            given = names.get((nd, ''), {})
+            meta = dict(group=groups.get(nd, dataset), dataset=given.get('condition', dataset), preset=preset,
+                        sample=given.get('sample', name))
+
+            def rows(path):
+                out = []
+                for r in read_csv(path):
+                    c = str(r.get('cell', ''))
+                    r = dict(meta, **r)
+                    if (nd, c) in names and 'cell' in names[(nd, c)]:
+                        r['cell'] = names[(nd, c)]['cell']
+                    if keys:
+                        r['_folder'], r['_cell'] = nd, c
+                    out.append(r)
+                return out
+            cells += rows(os.path.join(d, f))
             mp = os.path.join(d, f'{name}_per_mito.csv')
             if os.path.exists(mp):
-                mito += [dict(meta, **r) for r in read_csv(mp)]
-            samples.append(dict(folder=d, **meta))
+                mito += rows(mp)
+            samples.append(dict(folder=d, stem=name, **meta))
     return cells, mito, samples
 
 

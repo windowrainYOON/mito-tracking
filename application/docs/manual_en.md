@@ -20,6 +20,7 @@ The screenshots were made with synthetic example images.
 9. Groups
 10. Results of one image
 11. The Analysis tab: all samples together
+11-5. Results browser (view, export, rename)
 12. Output files
 13. Reading the results
 14. Command line
@@ -331,6 +332,30 @@ Buttons at the top
 
 ### 11-4. Cells / Mito objects (all samples)
 The cell and mito tables of all samples, with group, dataset and sample columns. Click a column header to sort.
+
+### 11-5. Results browser (view, export, rename)
+A separate window that runs no analysis. It reads an analysed results folder so you can look at it, pick parameters, export to Excel and rename things. Open it with **Results browser…** in the Analysis tab, which opens the folder loaded there. To open this window alone from a terminal, run `MitoAnalyzer --results RESULTS_FOLDER`.
+
+1. **Open folder…** picks the results folder (every sample below it is found).
+2. **Scope** sets what one row is:
+   - *Cells*: one cell per row
+   - *Mito objects*: one mito object per row
+   - *Green puncta*: one punctum per row
+   - *Images*: one image per row (the mean of its cells)
+   - *Groups*: one group per row
+   For *Images* and *Groups*, **Values** sets whether the means are of cells, mito objects or puncta. For *Groups*, **Group statistic** sets whether each cell (object) or each image mean counts as one value, and the boxes choose mean / SD / SEM / median / n.
+3. **Parameters**: only the ticked parameters are shown, and typing in the search box (`length`, `branch`) narrows the list. For example, to see only each cell's mean mito length and branches, press *None*, then tick *Mito object length mean*, *Branch length mean* and *Branches*. The choice is kept for the next time.
+4. **Filters**: tick groups / conditions / samples; green+ or green− cells only; only cells that pass QC (default; leaves out the edge cells that were not analysed).
+5. **Export to Excel**:
+   - *Export this table to Excel…* saves the table as shown, in its sorted order.
+   - *Export every scope to Excel…* saves one sheet per scope in one file.
+   Either way, an *info* sheet records the folder and the filters.
+6. **Renaming**: double-click a Group, Condition, Sample or Cell cell to change it.
+   - When other images share the group or condition being changed, you are asked whether to rename it for all of them or move only this image.
+   - An empty name goes back to the original. *Reset names…* restores all condition, sample and cell names.
+   - **The result files are not changed.** Group names go to `groups.csv` in the results folder and the rest to `names.csv`.
+   - The new names are also used by the Analysis tab and *Export by group*.
+   - The condition starts as the input folder name (the dataset).
 
 ## 12. Output files
 ```

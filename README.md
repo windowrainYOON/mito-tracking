@@ -65,5 +65,6 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 8. **세포 ROI 검토·수정**: 기본으로 Run all이 세포 ROI를 찾은 뒤 멈추고 검토 창을 엽니다. 선택·더하기·빼기·새 세포 그리기·삭제·합치기·되돌리기로 고친 뒤 확정하면 그 ROI로 분석이 이어집니다.
 9. **Cytosol Viewer ROI 사용**: Cytosol Viewer에서 저장한 이미지별 RoiSet `.zip`(세포·핵·세포질)을 **Cell ROI files…** 로 넣으면(또는 표에 끌어다 놓으면) 이름으로 이미지와 짝지어 그 ROI로 분석합니다 (명령줄: `--rois 폴더`). 분석에 쓴 세포·미토 ROI는 샘플마다 `<sample>_used_ROIs/` 에 저장됩니다.
 10. **세포 ROI 자동 검출 = Cytosol Analysis 알고리즘**: 세포 ROI는 기본으로 Cytosol Viewer의 자동 검출과 같은 알고리즘으로 찾습니다 (같은 이미지·설정이면 같은 ROI, 같은 세포 번호). Options의 *Cell detection* 에서 이전 검출로 되돌릴 수 있습니다 (명령줄: `--cell-method mito`).
+11. **결과 조회·수정 창 (Results browser)**: 분석된 결과 폴더를 열어 세포·미토 조각·puncta·이미지·그룹 단위로, 고른 파라미터만 보고 필터를 건 뒤 그대로 엑셀로 내보냅니다. 그룹·조건·샘플·세포 이름을 바꿀 수 있고(원본 결과 파일은 그대로, `groups.csv`·`names.csv` 에 기록), 바꾼 이름은 Analysis 탭과 그룹 내보내기에도 쓰입니다. Analysis 탭의 *Results browser…* 로 엽니다.
 
 설명 PDF 는 `cd application && .venv/bin/python tools/make_algorithm_pdf.py RED.tif GREEN.tif BLUE.tif -o docs/Mito_Analyzer_algorithm.pdf` 로 현재 코드 기준으로 다시 만들 수 있습니다.

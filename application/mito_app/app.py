@@ -4,6 +4,7 @@
     python -m mito_app --cli --batch FOLDER_OR_TIFF [...] -o OUTDIR [--dataset NAME] [--preset NAME] [--group NAME]
     python -m mito_app --cli IMAGE.czi -o OUTDIR [--czi-channels mito=0,protein=1,nucleus=2]
     ... --rois ROISET.zip | FOLDER     cell ROIs from Cytosol Viewer instead of the detected ones
+    python -m mito_app --results [RESULTS_FOLDER]   the results browser alone (view / export / rename, no analysis)
 
 Batch mode groups the TIFFs (folders are searched recursively) into red/green/blue sets by file name and writes each set to
 OUTDIR/<dataset>/<preset>-<dataset>/<sample>/ (dataset defaults to the name of the folder given,
@@ -159,5 +160,8 @@ def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
     if argv[:1] == ['--cli']:
         return cli(argv[1:])
+    if argv[:1] == ['--results']:   # the results browser on its own (no analysis)
+        from .results_browser import main as browser_main
+        return browser_main(argv[1] if len(argv) > 1 else '')
     from .gui import main as gui_main
     return gui_main()
